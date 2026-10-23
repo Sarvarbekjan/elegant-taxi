@@ -24,7 +24,7 @@ jobs:
           channel: 'stable'
 
       - name: Yetishmayotgan Android fayllarini yaratish
-        run: flutter create . --platforms=android --org=com.elegant.taxi
+        run: flutter create --project-name=elegant_taxi . --platforms=android --org=com.elegant.taxi
 
       - name: Kutubxonalarni yuklash
         run: flutter pub get
