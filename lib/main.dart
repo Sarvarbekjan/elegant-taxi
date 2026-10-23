@@ -9,7 +9,7 @@ void main() {
   runApp(const ElegantTaxiApp());
 }
 
-// ==================== GLOBAL TIZIM BAZASI ====================
+// ==================== GLOBAL BAZA ====================
 class OrderModel {
   final String id;
   final String clientPhone;
@@ -65,12 +65,11 @@ class DriverModel {
 }
 
 class AppState extends ChangeNotifier {
-  // Tarif sozlamalari (Admin o'zgartira oladi)
   int baseFare = 4000;
   int perKmRate = 2000;
   double comfortMultiplier = 1.35;
   int deliveryExtra = 3000;
-  int commissionPercent = 10; // 10% xizmat haqi
+  int commissionPercent = 10;
 
   final String adminPass = "9728847";
   bool isAdminUnlocked = false;
@@ -84,15 +83,6 @@ class AppState extends ChangeNotifier {
       carModel: "Oq Cobalt",
       carNumber: "01 A 777 AA",
       balance: 85000,
-      isOnline: true,
-    ),
-    DriverModel(
-      id: "D2",
-      name: "Jasur Karimov",
-      phone: "+998 93 987 65 43",
-      carModel: "Qora Gentra",
-      carNumber: "75 Z 555 ZZ",
-      balance: 42000,
       isOnline: true,
     ),
   ];
@@ -158,20 +148,12 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  int get totalCompletedRevenue {
-    return orders
-        .where((o) => o.status == 'Yakunlandi')
-        .fold(0, (sum, o) => sum + o.price);
-  }
-
-  int get totalCompanyProfit {
-    return ((totalCompletedRevenue * commissionPercent) / 100).round();
-  }
+  int get totalCompletedRevenue => orders.where((o) => o.status == 'Yakunlandi').fold(0, (sum, o) => sum + o.price);
+  int get totalCompanyProfit => ((totalCompletedRevenue * commissionPercent) / 100).round();
 }
 
 final AppState appState = AppState();
 
-// ==================== ASOSIY ILOVA ====================
 class ElegantTaxiApp extends StatelessWidget {
   const ElegantTaxiApp({super.key});
 
@@ -182,7 +164,7 @@ class ElegantTaxiApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primaryColor: const Color(0xFFFFCC00),
-        scaffoldBackgroundColor: const Color(0xFFF3F4F6),
+        scaffoldBackgroundColor: const Color(0xFF121212),
         fontFamily: 'Roboto',
       ),
       home: const RoleContainerScreen(),
@@ -198,7 +180,7 @@ class RoleContainerScreen extends StatefulWidget {
 }
 
 class _RoleContainerScreenState extends State<RoleContainerScreen> {
-  int _selectedRole = 0; // 0: Mijoz, 1: Haydovchi, 2: Operator, 3: Admin
+  int _selectedRole = 0;
 
   @override
   void initState() {
@@ -217,7 +199,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
   }
 
   void _selectRole(int roleIndex) {
-    Navigator.pop(context); // Drawerni yopish
+    Navigator.pop(context);
     if (roleIndex == 3 && !appState.isAdminUnlocked) {
       _showAdminPasswordDialog();
     } else {
@@ -243,22 +225,16 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
           obscureText: true,
           keyboardType: TextInputType.number,
           decoration: InputDecoration(
-            hintText: "Maxfiy parolni kiriting",
+            hintText: "Parolni kiriting (9728847)",
             filled: true,
             fillColor: Colors.grey.shade100,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Bekor qilish", style: TextStyle(color: Colors.grey)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Bekor qilish")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFCC00),
-              foregroundColor: Colors.black,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
             onPressed: () {
               if (passCtrl.text.trim() == appState.adminPass) {
                 appState.isAdminUnlocked = true;
@@ -266,10 +242,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
                 setState(() => _selectedRole = 3);
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text("Parol noto'g'ri! Ruxsat berilmadi."),
-                    backgroundColor: Colors.red,
-                  ),
+                  const SnackBar(content: Text("Parol noto'g'ri!"), backgroundColor: Colors.red),
                 );
               }
             },
@@ -283,19 +256,16 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
   @override
   Widget build(BuildContext context) {
     String roleTitle = "🚖 ELEGANT TAXI";
-    if (_selectedRole == 1) roleTitle = "🛞 HAYDOVCHI TERMINALI";
-    if (_selectedRole == 2) roleTitle = "🎧 OPERATOR PANELI";
-    if (_selectedRole == 3) roleTitle = "👑 SUPER-ADMIN BOSHQARUV";
+    if (_selectedRole == 1) roleTitle = "🛞 HAYDOVCHI";
+    if (_selectedRole == 2) roleTitle = "🎧 OPERATOR";
+    if (_selectedRole == 3) roleTitle = "👑 ADMIN (9728847)";
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF14171F),
+        backgroundColor: const Color(0xFF1E1E1E),
         iconTheme: const IconThemeData(color: Color(0xFFFFCC00)),
-        title: Text(
-          roleTitle,
-          style: const TextStyle(color: Color(0xFFFFCC00), fontWeight: FontWeight.bold, fontSize: 16),
-        ),
+        title: Text(roleTitle, style: const TextStyle(color: Color(0xFFFFCC00), fontWeight: FontWeight.bold, fontSize: 16)),
         actions: [
           if (_selectedRole != 0)
             TextButton.icon(
@@ -311,7 +281,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.only(top: 50, bottom: 24, left: 20, right: 20),
-              color: const Color(0xFF14171F),
+              color: const Color(0xFF1E1E1E),
               child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -321,14 +291,8 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
                     child: Icon(Icons.local_taxi, size: 34, color: Colors.black),
                   ),
                   SizedBox(height: 12),
-                  Text(
-                    "ELEGANT TAXI",
-                    style: TextStyle(color: Color(0xFFFFCC00), fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    "Yagona avtomatlashtirilgan tizim",
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
+                  Text("ELEGANT TAXI", style: TextStyle(color: Color(0xFFFFCC00), fontSize: 20, fontWeight: FontWeight.bold)),
+                  Text("Yandex Uslubidagi Tizim", style: TextStyle(color: Colors.white70, fontSize: 13)),
                 ],
               ),
             ),
@@ -340,29 +304,23 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.drive_eta, color: Colors.green),
-              title: const Text("Haydovchi (Shofyor) rejimi", style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text("${appState.orders.where((o) => o.status == 'Kutilmoqda').length} ta yangi buyurtma"),
+              title: const Text("Haydovchi rejimi", style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text("${appState.orders.where((o) => o.status == 'Kutilmoqda').length} ta yangi zakaz"),
               selected: _selectedRole == 1,
               onTap: () => _selectRole(1),
             ),
             ListTile(
               leading: const Icon(Icons.support_agent, color: Colors.orange),
-              title: const Text("Operator (Dispetcher)", style: TextStyle(fontWeight: FontWeight.w600)),
+              title: const Text("Operator paneli", style: TextStyle(fontWeight: FontWeight.w600)),
               selected: _selectedRole == 2,
               onTap: () => _selectRole(2),
             ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.admin_panel_settings, color: Colors.red),
-              title: const Text("Super-Admin (Rahbar)", style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text("Himoyalangan boshqaruv paneli"),
+              title: const Text("Super-Admin (9728847)", style: TextStyle(fontWeight: FontWeight.bold)),
               selected: _selectedRole == 3,
               onTap: () => _selectRole(3),
-            ),
-            const Spacer(),
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Text("Elegant Taxi v2.0 Pro", style: TextStyle(color: Colors.grey)),
             ),
           ],
         ),
@@ -380,7 +338,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
   }
 }
 
-// ==================== 1. MIJOZ EKRANI ====================
+// ==================== MIJOZ EKRANI ====================
 class ClientView extends StatefulWidget {
   const ClientView({super.key});
 
@@ -393,7 +351,7 @@ class _ClientViewState extends State<ClientView> {
   LatLng _currentLocation = const LatLng(41.311081, 69.240562);
   LatLng? _destinationLocation;
 
-  final TextEditingController _fromController = TextEditingController(text: "Mening joylashuvim (GPS)");
+  final TextEditingController _fromController = TextEditingController(text: "Mening joylashuvim");
   final TextEditingController _toController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController(text: "+998 ");
 
@@ -402,17 +360,9 @@ class _ClientViewState extends State<ClientView> {
   int _orderPrice = 4000;
   OrderModel? _activeOrder;
 
-  final List<Map<String, dynamic>> _quickPlaces = [
-    {"name": "Markaziy Bozor", "lat": 41.3250, "lng": 69.2450},
-    {"name": "Temir yo'l vokzali", "lat": 41.2950, "lng": 69.2850},
-    {"name": "Aeroport", "lat": 41.2620, "lng": 69.2650},
-    {"name": "Shifoxona", "lat": 41.3320, "lng": 69.2200},
-  ];
-
   @override
   void initState() {
     super.initState();
-    _orderPrice = appState.baseFare;
     _determinePosition();
   }
 
@@ -426,7 +376,6 @@ class _ClientViewState extends State<ClientView> {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) return;
       }
-      if (permission == LocationPermission.deniedForever) return;
 
       Position position = await Geolocator.getCurrentPosition();
       setState(() {
@@ -455,7 +404,6 @@ class _ClientViewState extends State<ClientView> {
     if (dist < 1.0) dist = 1.0;
 
     double rawPrice = appState.baseFare + (dist * appState.perKmRate);
-
     if (_selectedTariff == 'Komfort') rawPrice *= appState.comfortMultiplier;
     if (_selectedTariff == 'Dostavka') rawPrice += appState.deliveryExtra;
 
@@ -466,28 +414,20 @@ class _ClientViewState extends State<ClientView> {
   }
 
   void _submitOrder() {
-    if (_destinationLocation == null && _toController.text.trim().isEmpty) {
+    if (_destinationLocation == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Iltimos, boradigan manzilni xaritadan bosing yoki yozing!")),
+        const SnackBar(content: Text("Iltimos, xaritadan boradigan manzilni bosing!")),
       );
       return;
-    }
-
-    final destPoint = _destinationLocation ??
-        LatLng(_currentLocation.latitude + 0.015, _currentLocation.longitude + 0.015);
-
-    if (_distanceKm == 0.0) {
-      _destinationLocation = destPoint;
-      _calculatePrice();
     }
 
     final newOrder = OrderModel(
       id: "ORD-${Random().nextInt(9000) + 1000}",
       clientPhone: _phoneController.text.trim(),
       fromAddress: _fromController.text.trim(),
-      toAddress: _toController.text.trim().isEmpty ? "Xaritadan belgilangan nuqta" : _toController.text.trim(),
+      toAddress: _toController.text.trim().isEmpty ? "Xaritadan belgilangan manzil" : _toController.text.trim(),
       fromPoint: _currentLocation,
-      toPoint: destPoint,
+      toPoint: _destinationLocation!,
       tariff: _selectedTariff,
       distanceKm: _distanceKm,
       price: _orderPrice,
@@ -510,18 +450,20 @@ class _ClientViewState extends State<ClientView> {
             initialCenter: _currentLocation,
             initialZoom: 14.5,
             onTap: (tapPosition, point) {
-              if (_activeOrder == null || _activeOrder!.status == 'Yakunlandi' || _activeOrder!.status == 'Bekor qilindi') {
+              if (_activeOrder == null || _activeOrder!.status == 'Yakunlandi') {
                 setState(() {
                   _destinationLocation = point;
-                  _toController.text = "Manzil (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})";
+                  _toController.text = "Manzil: ${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}";
                 });
                 _calculatePrice();
               }
             },
           ),
           children: [
+            // YANDEX USLUBIDAGI YUQORI SIFATLI TINIQ XARITA QATLAMI
             TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+              subdomains: const ['a', 'b', 'c', 'd'],
               userAgentPackageName: 'com.elegant.taxi',
             ),
             if (_destinationLocation != null)
@@ -557,7 +499,7 @@ class _ClientViewState extends State<ClientView> {
           top: 12,
           right: 12,
           child: FloatingActionButton.small(
-            backgroundColor: const Color(0xFF14171F),
+            backgroundColor: const Color(0xFF1E1E1E),
             onPressed: _determinePosition,
             child: const Icon(Icons.gps_fixed, color: Color(0xFFFFCC00)),
           ),
@@ -586,39 +528,20 @@ class _ClientViewState extends State<ClientView> {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            accepted ? Icons.local_taxi : Icons.radar,
-            size: 46,
-            color: accepted ? Colors.green : const Color(0xFFFFCC00),
-          ),
+          Icon(accepted ? Icons.local_taxi : Icons.radar, size: 46, color: accepted ? Colors.green : const Color(0xFFFFCC00)),
           const SizedBox(height: 8),
-          Text(
-            accepted ? "Haydovchi yo'lga chiqdi!" : "Yaqin atrofdagi haydovchi qidirilmoqda...",
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
-          ),
+          Text(accepted ? "Haydovchi yo'lga chiqdi!" : "Haydovchi qidirilmoqda...", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
           const SizedBox(height: 6),
           if (accepted)
             Container(
               padding: const EdgeInsets.all(12),
               margin: const EdgeInsets.symmetric(vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(12),
-              ),
+              decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
               child: Column(
                 children: [
                   Text("Haydovchi: ${_activeOrder!.driverName}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   Text("Mashina: ${_activeOrder!.driverCar}", style: const TextStyle(color: Colors.black87)),
                 ],
-              ),
-            )
-          else
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                "Maslahat: Yon menyudan 'Haydovchi rejimi'ga o'tib, ushbu buyurtmani o'zingiz qabul qilib sinab ko'rishingiz mumkin!",
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ),
           Text("Narxi: ${_activeOrder!.price} so'm (${_activeOrder!.tariff})", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -630,7 +553,7 @@ class _ClientViewState extends State<ClientView> {
                 appState.cancelOrder(_activeOrder!.id);
                 setState(() => _activeOrder = null);
               },
-              child: const Text("Buyurtmani bekor qilish", style: TextStyle(color: Colors.red)),
+              child: const Text("Bekor qilish", style: TextStyle(color: Colors.red)),
             ),
           ),
         ],
@@ -640,33 +563,10 @@ class _ClientViewState extends State<ClientView> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: _quickPlaces.map((place) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 8.0, bottom: 8.0),
-                child: ActionChip(
-                  avatar: const Icon(Icons.place, size: 16, color: Colors.red),
-                  label: Text(place["name"]),
-                  onPressed: () {
-                    LatLng pt = LatLng(place["lat"], place["lng"]);
-                    setState(() {
-                      _destinationLocation = pt;
-                      _toController.text = place["name"];
-                    });
-                    _mapController.move(pt, 14);
-                    _calculatePrice();
-                  },
-                ),
-              );
-            }).toList(),
-          ),
-        ),
         TextField(
           controller: _fromController,
           decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.my_location, color: Colors.green, size: 18),
+            prefixIcon: const Icon(Icons.circle, color: Colors.green, size: 14),
             hintText: "Qayerdan olamiz?",
             isDense: true,
             filled: true,
@@ -679,7 +579,7 @@ class _ClientViewState extends State<ClientView> {
           controller: _toController,
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.location_on, color: Colors.red, size: 18),
-            hintText: "Qayerga boramiz? (Xaritadan bosing)",
+            hintText: "Qayerga? (Xaritadan bosing)",
             isDense: true,
             filled: true,
             fillColor: Colors.grey.shade100,
@@ -748,7 +648,7 @@ class _ClientViewState extends State<ClientView> {
   }
 }
 
-// ==================== 2. HAYDOVCHI (SHOFYOR) PANELI ====================
+// ==================== HAYDOVCHI PANELI ====================
 class DriverView extends StatefulWidget {
   const DriverView({super.key});
 
@@ -770,10 +670,7 @@ class _DriverViewState extends State<DriverView> {
         children: [
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF14171F),
-              borderRadius: BorderRadius.circular(16),
-            ),
+            decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(16)),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -795,104 +692,93 @@ class _DriverViewState extends State<DriverView> {
             ),
           ),
           const SizedBox(height: 16),
-          if (currentDriver.isBlocked)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(12)),
-              child: const Text("Sizning profilingiz Admin tomonidan bloklangan!", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-            )
-          else ...[
-            if (myActiveOrders.isNotEmpty) ...[
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text("Faol buyurtmangiz:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
-              const SizedBox(height: 8),
-              ...myActiveOrders.map((ord) => Card(
-                    color: Colors.green.shade50,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(14.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("Mijoz tel: ${ord.clientPhone}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                          Text("Qayerdan: ${ord.fromAddress}"),
-                          Text("Qayerga: ${ord.toAddress}"),
-                          Text("Narxi: ${ord.price} so'm (${ord.distanceKm} km)", style: const TextStyle(fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                              onPressed: () => appState.completeOrder(ord.id, currentDriver),
-                              icon: const Icon(Icons.check_circle),
-                              label: const Text("SAFARNI YAKUNLASH"),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )),
-              const Divider(height: 24),
-            ],
+          if (myActiveOrders.isNotEmpty) ...[
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text("Yangi tushgan buyurtmalar:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              child: Text("Faol buyurtma:", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
             ),
             const SizedBox(height: 8),
-            Expanded(
-              child: pendingOrders.isEmpty
-                  ? const Center(child: Text("Hozircha yangi buyurtmalar yo'q...", style: TextStyle(color: Colors.grey)))
-                  : ListView.builder(
-                      itemCount: pendingOrders.length,
-                      itemBuilder: (ctx, i) {
-                        final ord = pendingOrders[i];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          child: Padding(
-                            padding: const EdgeInsets.all(14.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Chip(label: Text(ord.tariff), backgroundColor: const Color(0xFFFFFBEB)),
-                                    Text("${ord.price} so'm", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-                                  ],
-                                ),
-                                Text("📍 Qayerdan: ${ord.fromAddress}"),
-                                Text("🏁 Qayerga: ${ord.toAddress}"),
-                                Text("📞 Tel: ${ord.clientPhone} • Masofa: ${ord.distanceKm} km", style: const TextStyle(color: Colors.grey)),
-                                const SizedBox(height: 10),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFFFFCC00),
-                                      foregroundColor: Colors.black,
-                                    ),
-                                    onPressed: () => appState.acceptOrder(ord.id, currentDriver),
-                                    child: const Text("QABUL QILISH", style: TextStyle(fontWeight: FontWeight.bold)),
-                                  ),
-                                ),
-                              ],
-                            ),
+            ...myActiveOrders.map((ord) => Card(
+                  color: Colors.green.shade50,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Mijoz tel: ${ord.clientPhone}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        Text("Qayerdan: ${ord.fromAddress}"),
+                        Text("Qayerga: ${ord.toAddress}"),
+                        Text("Narxi: ${ord.price} so'm", style: const TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                            onPressed: () => appState.completeOrder(ord.id, currentDriver),
+                            icon: const Icon(Icons.check_circle),
+                            label: const Text("SAFARNI YAKUNLASH"),
                           ),
-                        );
-                      },
+                        ),
+                      ],
                     ),
-            ),
+                  ),
+                )),
+            const Divider(height: 24),
           ],
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text("Yangi tushgan zakazlar:", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: pendingOrders.isEmpty
+                ? const Center(child: Text("Yangi zakazlar yo'q...", style: TextStyle(color: Colors.grey)))
+                : ListView.builder(
+                    itemCount: pendingOrders.length,
+                    itemBuilder: (ctx, i) {
+                      final ord = pendingOrders[i];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Chip(label: Text(ord.tariff), backgroundColor: const Color(0xFFFFFBEB)),
+                                  Text("${ord.price} so'm", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+                                ],
+                              ),
+                              Text("📍 Qayerdan: ${ord.fromAddress}"),
+                              Text("🏁 Qayerga: ${ord.toAddress}"),
+                              Text("📞 Tel: ${ord.clientPhone} • ${ord.distanceKm} km", style: const TextStyle(color: Colors.grey)),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
+                                  onPressed: () => appState.acceptOrder(ord.id, currentDriver),
+                                  child: const Text("QABUL QILISH", style: TextStyle(fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
         ],
       ),
     );
   }
 }
 
-// ==================== 3. OPERATOR (DISPETCHER) PANELI ====================
+// ==================== OPERATOR PANELI ====================
 class OperatorView extends StatefulWidget {
   const OperatorView({super.key});
 
@@ -908,16 +794,9 @@ class _OperatorViewState extends State<OperatorView> {
   String _tariff = 'Ekonom';
 
   void _createManualOrder() {
-    if (_fromCtrl.text.isEmpty || _toCtrl.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Manzillarni kiriting!")),
-      );
-      return;
-    }
+    if (_fromCtrl.text.isEmpty || _toCtrl.text.isEmpty) return;
     double km = double.tryParse(_kmCtrl.text) ?? 3.0;
     double raw = appState.baseFare + (km * appState.perKmRate);
-    if (_tariff == 'Komfort') raw *= appState.comfortMultiplier;
-    if (_tariff == 'Dostavka') raw += appState.deliveryExtra;
     int price = (raw / 500).round() * 500;
 
     final ord = OrderModel(
@@ -936,9 +815,6 @@ class _OperatorViewState extends State<OperatorView> {
     appState.createOrder(ord);
     _fromCtrl.clear();
     _toCtrl.clear();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Buyurtma bazaga qo'shildi va haydovchilarga yuborildi!"), backgroundColor: Colors.green),
-    );
   }
 
   @override
@@ -955,58 +831,24 @@ class _OperatorViewState extends State<OperatorView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("📞 Yangi qo'ng'iroq buyurtmasini kiritish", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const Text("📞 Qo'ng'iroq orqali zakaz berish", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   const SizedBox(height: 10),
-                  TextField(
-                    controller: _phoneCtrl,
-                    decoration: const InputDecoration(labelText: "Mijoz telefoni", isDense: true, border: OutlineInputBorder()),
-                  ),
+                  TextField(controller: _phoneCtrl, decoration: const InputDecoration(labelText: "Tel", isDense: true, border: OutlineInputBorder())),
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _fromCtrl,
-                          decoration: const InputDecoration(labelText: "Qayerdan", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
+                      Expanded(child: TextField(controller: _fromCtrl, decoration: const InputDecoration(labelText: "Qayerdan", isDense: true, border: OutlineInputBorder()))),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _toCtrl,
-                          decoration: const InputDecoration(labelText: "Qayerga", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _kmCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Taxminiy masofa (km)", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      DropdownButton<String>(
-                        value: _tariff,
-                        items: ['Ekonom', 'Komfort', 'Dostavka']
-                            .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                            .toList(),
-                        onChanged: (v) => setState(() => _tariff = v!),
-                      ),
+                      Expanded(child: TextField(controller: _toCtrl, decoration: const InputDecoration(labelText: "Qayerga", isDense: true, border: OutlineInputBorder()))),
                     ],
                   ),
                   const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton.icon(
+                    child: ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
                       onPressed: _createManualOrder,
-                      icon: const Icon(Icons.send),
-                      label: const Text("BUYURTMANI YUBORISH", style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: const Text("ZAKAZNI YUBORISH", style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -1014,33 +856,21 @@ class _OperatorViewState extends State<OperatorView> {
             ),
           ),
           const SizedBox(height: 12),
-          const Text("Barcha joriy buyurtmalar nazorati:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text("Barcha zakazlar:", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           Expanded(
-            child: appState.orders.isEmpty
-                ? const Center(child: Text("Buyurtmalar tarixi bo'sh"))
-                : ListView.builder(
-                    itemCount: appState.orders.length,
-                    itemBuilder: (ctx, i) {
-                      final o = appState.orders[i];
-                      return Card(
-                        child: ListTile(
-                          title: Text("${o.fromAddress} ➔ ${o.toAddress}", style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text("Tel: ${o.clientPhone} • ${o.price} so'm • Holati: ${o.status}\nHaydovchi: ${o.driverName ?? 'Biriktirilmagan'}"),
-                          isThreeLine: true,
-                          trailing: o.status == 'Kutilmoqda'
-                              ? PopupMenuButton<DriverModel>(
-                                  icon: const Icon(Icons.person_add, color: Colors.blue),
-                                  onSelected: (d) => appState.acceptOrder(o.id, d),
-                                  itemBuilder: (ctx) => appState.drivers
-                                      .map((d) => PopupMenuItem(value: d, child: Text("${d.name}ga biriktirish")))
-                                      .toList(),
-                                )
-                              : const Icon(Icons.check_circle, color: Colors.green),
-                        ),
-                      );
-                    },
+            child: ListView.builder(
+              itemCount: appState.orders.length,
+              itemBuilder: (ctx, i) {
+                final o = appState.orders[i];
+                return Card(
+                  child: ListTile(
+                    title: Text("${o.fromAddress} ➔ ${o.toAddress}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text("Tel: ${o.clientPhone} • ${o.price} so'm • ${o.status}"),
                   ),
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -1048,7 +878,7 @@ class _OperatorViewState extends State<OperatorView> {
   }
 }
 
-// ==================== 4. SUPER-ADMIN (RAHBAR) PANELI ====================
+// ==================== ADMIN PANELI ====================
 class AdminView extends StatefulWidget {
   const AdminView({super.key});
 
@@ -1059,67 +889,19 @@ class AdminView extends StatefulWidget {
 class _AdminViewState extends State<AdminView> {
   late TextEditingController _baseCtrl;
   late TextEditingController _kmCtrl;
-  late TextEditingController _commCtrl;
 
   @override
   void initState() {
     super.initState();
     _baseCtrl = TextEditingController(text: appState.baseFare.toString());
     _kmCtrl = TextEditingController(text: appState.perKmRate.toString());
-    _commCtrl = TextEditingController(text: appState.commissionPercent.toString());
   }
 
-  void _saveTariffs() {
+  void _save() {
     int b = int.tryParse(_baseCtrl.text) ?? 4000;
     int k = int.tryParse(_kmCtrl.text) ?? 2000;
-    int c = int.tryParse(_commCtrl.text) ?? 10;
-    appState.updateTariffs(newBase: b, newPerKm: k, newComm: c);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Yangi tarif va komissiya saqlandi!"), backgroundColor: Colors.green),
-    );
-  }
-
-  void _showAddDriverDialog() {
-    final nameCtrl = TextEditingController();
-    final phoneCtrl = TextEditingController(text: "+998 ");
-    final carCtrl = TextEditingController();
-    final numCtrl = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Yangi haydovchi qo'shish"),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "Ism va familiya")),
-              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: "Telefon raqami")),
-              TextField(controller: carCtrl, decoration: const InputDecoration(labelText: "Mashina rusumi (Oq Cobalt)")),
-              TextField(controller: numCtrl, decoration: const InputDecoration(labelText: "Davlat raqami (01 A 777 AA)")),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Bekor qilish")),
-          ElevatedButton(
-            onPressed: () {
-              if (nameCtrl.text.isNotEmpty) {
-                appState.addDriver(DriverModel(
-                  id: "D${appState.drivers.length + 1}",
-                  name: nameCtrl.text.trim(),
-                  phone: phoneCtrl.text.trim(),
-                  carModel: carCtrl.text.trim(),
-                  carNumber: numCtrl.text.trim(),
-                ));
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text("Qo'shish"),
-          ),
-        ],
-      ),
-    );
+    appState.updateTariffs(newBase: b, newPerKm: k, newComm: appState.commissionPercent);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Saqlandi!"), backgroundColor: Colors.green));
   }
 
   @override
@@ -1129,133 +911,26 @@ class _AdminViewState extends State<AdminView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _statCard("Jami Buyurtma", "${appState.orders.length} ta", Icons.receipt_long, Colors.blue),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _statCard("Umumiy Aylanma", "${appState.totalCompletedRevenue} so'm", Icons.payments, Colors.green),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _statCard("Kompaniya Foydasi", "${appState.totalCompanyProfit} so'm", Icons.trending_up, Colors.orange),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
+          const Text("👑 Super-Admin Boshqaruvi (Parol: 9728847)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 12),
           Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             child: Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.all(14.0),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("⚙️ Tarif va Narxlarni Boshqarish", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  TextField(controller: _baseCtrl, decoration: const InputDecoration(labelText: "Boshlang'ich narx")),
+                  const SizedBox(height: 8),
+                  TextField(controller: _kmCtrl, decoration: const InputDecoration(labelText: "1 km narxi")),
                   const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _baseCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Boshlang'ich narx (so'm)", border: OutlineInputBorder(), isDense: true),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _kmCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "1 km narxi (so'm)", border: OutlineInputBorder(), isDense: true),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _commCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Komissiya (%)", border: OutlineInputBorder(), isDense: true),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF14171F), foregroundColor: const Color(0xFFFFCC00)),
-                      onPressed: _saveTariffs,
-                      icon: const Icon(Icons.save),
-                      label: const Text("TARIFLARNI SAQLASH"),
-                    ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
+                    onPressed: _save,
+                    child: const Text("TARIFLARNI SAQLASH"),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text("🚖 Haydovchilar Boshqaruvi", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
-                onPressed: _showAddDriverDialog,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text("Yangi haydovchi"),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...appState.drivers.map((d) => Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: d.isBlocked ? Colors.red : Colors.green,
-                    child: const Icon(Icons.person, color: Colors.white),
-                  ),
-                  title: Text("${d.name} (${d.carNumber})", style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text("${d.carModel} • Tel: ${d.phone}\nBalans: ${d.balance} so'm"),
-                  isThreeLine: true,
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: "+50,000 so'm balans qo'shish",
-                        icon: const Icon(Icons.account_balance_wallet, color: Colors.blue),
-                        onPressed: () => appState.addDriverBalance(d.id, 50000),
-                      ),
-                      IconButton(
-                        tooltip: d.isBlocked ? "Blokdan chiqarish" : "Bloklash",
-                        icon: Icon(d.isBlocked ? Icons.lock_open : Icons.block, color: Colors.red),
-                        onPressed: () => appState.toggleDriverBlock(d.id),
-                      ),
-                    ],
-                  ),
-                ),
-              )),
-        ],
-      ),
-    );
-  }
-
-  Widget _statCard(String title, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 28),
-          const SizedBox(height: 6),
-          Text(title, style: const TextStyle(fontSize: 11, color: Colors.grey), textAlign: TextAlign.center),
-          const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
         ],
       ),
     );
