@@ -26,6 +26,10 @@ jobs:
       - name: Yetishmayotgan Android fayllarini yaratish
         run: flutter create --project-name=elegant_taxi . --platforms=android --org=com.elegant.taxi
 
+      - name: Kotlin versiyasini yangilash
+        run: |
+          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = '\''1.9.22'\''/g' android/build.gradle
+
       - name: Kutubxonalarni yuklash
         run: flutter pub get
 
