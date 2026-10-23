@@ -23,6 +23,9 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
+      - name: Yetishmayotgan Android fayllarini yaratish
+        run: flutter create . --platforms=android --org=com.elegant.taxi
+
       - name: Kutubxonalarni yuklash
         run: flutter pub get
 
