@@ -292,7 +292,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
                   ),
                   SizedBox(height: 12),
                   Text("ELEGANT TAXI", style: TextStyle(color: Color(0xFFFFCC00), fontSize: 20, fontWeight: FontWeight.bold)),
-                  Text("Yandex Uslubidagi Tizim", style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  Text("Yandex Xarita Tizimi", style: TextStyle(color: Colors.white70, fontSize: 13)),
                 ],
               ),
             ),
@@ -460,10 +460,10 @@ class _ClientViewState extends State<ClientView> {
             },
           ),
           children: [
-            // YANDEX USLUBIDAGI YUQORI SIFATLI TINIQ XARITA QATLAMI
+            // YANDEX MAPS TILES API (Sizning API kalitingiz ulandi)
             TileLayer(
-              urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-              subdomains: const ['a', 'b', 'c', 'd'],
+              urlTemplate: 'https://core-renderer-tiles.maps.yandex.net/tiles?v=2.26.0&x={x}&y={y}&z={z}&scale=1&lang=ru_RU',
+              additionalOptions: const {'apikey': '27ebce7c-5499-4a59-8e43-c1f231d7c910'},
               userAgentPackageName: 'com.elegant.taxi',
             ),
             if (_destinationLocation != null)
@@ -911,9 +911,9 @@ class _AdminViewState extends State<AdminView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("👑 Super-Admin Boshqaruvi (Parol: 9728847)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text("👑 Super-Admin Boshqaruvi (Parol: 919728847)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 12),
-          Card(
+      Card(
             child: Padding(
               padding: const EdgeInsets.all(14.0),
               child: Column(
