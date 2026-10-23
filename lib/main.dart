@@ -245,7 +245,9 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFFFCC00),
                               foregroundColor: Colors.black,
-                              shape: BorderRadius.circular(14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
                             ),
                             onPressed: () => setState(() => _isSearching = true),
                             child: const Text("BUYURTMA BERISH", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
