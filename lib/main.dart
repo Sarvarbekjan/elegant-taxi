@@ -36,15 +36,15 @@ class MainHomeScreen extends StatefulWidget {
 
 class _MainHomeScreenState extends State<MainHomeScreen> {
   final MapController _mapController = MapController();
-  LatLng _currentLocation = const LatLng(37.2242, 67.2783);
+  LatLng _currentLocation = const LatLng(41.311081, 69.240562); // Toshkent / standart lokatsiya
   LatLng? _destinationLocation;
   
   final TextEditingController _fromController = TextEditingController(text: "Mening joylashuvim");
   final TextEditingController _toController = TextEditingController();
 
   String _selectedTariff = 'Ekonom';
-  double _distanceKm = 2.5;
-  int _orderPrice = 9000;
+  double _distanceKm = 0.0;
+  int _orderPrice = 8000;
   bool _isSearching = false;
 
   @override
@@ -64,11 +64,13 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
         if (permission == LocationPermission.denied) return;
       }
 
+      if (permission == LocationPermission.deniedForever) return;
+
       Position position = await Geolocator.getCurrentPosition();
       setState(() {
         _currentLocation = LatLng(position.latitude, position.longitude);
-        _mapController.move(_currentLocation, 15);
       });
+      _mapController.move(_currentLocation, 15);
     } catch (_) {}
   }
 
@@ -84,14 +86,14 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
             sin(dLon / 2) *
             sin(dLon / 2);
     double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    double dist = earthRadius * c * 1.3;
+    double dist = earthRadius * c * 1.3; // Ko'cha burilishlari koeffitsiyenti
     if (dist < 1.0) dist = 1.0;
 
     int baseFare = 4000;
     int perKm = 2000;
     double rawPrice = baseFare + (dist * perKm);
 
-    if (_selectedTariff == 'Komfort') rawPrice *= 1.3;
+    if (_selectedTariff == 'Komfort') rawPrice *= 1.35;
     if (_selectedTariff == 'Dostavka') rawPrice += 3000;
 
     setState(() {
@@ -103,18 +105,19 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false, // Klaviaturada xarita ezilib ketmasligi uchun
       body: Stack(
         children: [
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
               initialCenter: _currentLocation,
-              initialZoom: 15,
+              initialZoom: 14.5,
               onTap: (tapPosition, point) {
                 if (!_isSearching) {
                   setState(() {
                     _destinationLocation = point;
-                    _toController.text = "Xaritadan tanlangan manzil";
+                    _toController.text = "${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}";
                   });
                   _calculatePrice();
                 }
@@ -129,11 +132,15 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
                 markers: [
                   Marker(
                     point: _currentLocation,
+                    width: 40,
+                    height: 40,
                     child: const Icon(Icons.my_location, color: Colors.blue, size: 36),
                   ),
                   if (_destinationLocation != null)
                     Marker(
                       point: _destinationLocation!,
+                      width: 40,
+                      height: 40,
                       child: const Icon(Icons.location_on, color: Colors.red, size: 40),
                     ),
                 ],
@@ -143,17 +150,20 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
           SafeArea(
             child: Container(
               margin: const EdgeInsets.all(12),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: const Color(0xFF14171F),
                 borderRadius: BorderRadius.circular(14),
                 boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)],
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Text("🚖 ELEGANT TAXI", style: TextStyle(color: Color(0xFFFFCC00), fontWeight: FontWeight.bold, fontSize: 16)),
-                  Spacer(),
-                  Icon(Icons.shield, color: Colors.green, size: 20),
+                  const Text("🚖 ELEGANT TAXI", style: TextStyle(color: Color(0xFFFFCC00), fontWeight: FontWeight.bold, fontSize: 16)),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.gps_fixed, color: Color(0xFFFFCC00)),
+                    onPressed: _determinePosition,
+                  ),
                 ],
               ),
             ),
@@ -173,8 +183,9 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
                   ? Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        const SizedBox(height: 10),
                         const CircularProgressIndicator(color: Color(0xFFFFCC00)),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 16),
                         const Text("Haydovchi qidirilmoqda...", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                         const SizedBox(height: 16),
                         OutlinedButton(
@@ -201,7 +212,7 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
                           controller: _toController,
                           decoration: InputDecoration(
                             prefixIcon: const Icon(Icons.location_on, color: Colors.red, size: 18),
-                            hintText: "Qayerga? (Xaritadan bosing)",
+                            hintText: "Boradigan manzilni xaritadan bosing",
                             filled: true,
                             fillColor: Colors.grey.shade100,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
@@ -233,7 +244,7 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text("Masofa: $_distanceKm km", style: const TextStyle(color: Colors.grey)),
+                            Text("Masofa: $_distanceKm km", style: const TextStyle(color: Colors.grey, fontSize: 15)),
                             Text("$_orderPrice so'm", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
                           ],
                         ),
@@ -249,7 +260,15 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
                                 borderRadius: BorderRadius.circular(14),
                               ),
                             ),
-                            onPressed: () => setState(() => _isSearching = true),
+                            onPressed: () {
+                              if (_destinationLocation == null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text("Iltimos, oldin xaritadan boradigan joyingizni bosing!")),
+                                );
+                                return;
+                              }
+                              setState(() => _isSearching = true);
+                            },
                             child: const Text("BUYURTMA BERISH", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                           ),
                         ),
