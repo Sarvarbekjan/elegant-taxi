@@ -23,12 +23,19 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: Yetishmayotgan Android fayllarini yaratish
-        run: flutter create --project-name=elegant_taxi . --platforms=android --org=com.elegant.taxi
+      - name: Android platformasini yaratish
+        run: flutter create --project-name=elegant_taxi --platforms=android --org=com.elegant.taxi .
 
-      - name: Kotlin versiyasini yangilash
+      - name: Kotlin va Gradle mosligini to'g'rilash
         run: |
-          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = '\''1.9.22'\''/g' android/build.gradle
+          # Agar settings.gradle faylida bo'lsa yangilaymiz
+          if [ -f android/settings.gradle ]; then
+            sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.22"/g' android/settings.gradle
+          fi
+          # Agar build.gradle faylida bo'lsa yangilaymiz
+          if [ -f android/build.gradle ]; then
+            sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = '\''1.9.22'\''/g' android/build.gradle
+          fi
 
       - name: Kutubxonalarni yuklash
         run: flutter pub get
