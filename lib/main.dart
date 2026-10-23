@@ -292,7 +292,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
                   ),
                   SizedBox(height: 12),
                   Text("ELEGANT TAXI", style: TextStyle(color: Color(0xFFFFCC00), fontSize: 20, fontWeight: FontWeight.bold)),
-                  Text("Yandex Xarita Tizimi", style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  Text("Mukammal Tizim", style: TextStyle(color: Colors.white70, fontSize: 13)),
                 ],
               ),
             ),
@@ -453,17 +453,17 @@ class _ClientViewState extends State<ClientView> {
               if (_activeOrder == null || _activeOrder!.status == 'Yakunlandi') {
                 setState(() {
                   _destinationLocation = point;
-                  _toController.text = "Manzil: ${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}";
+                  _toController.text = "Manzil: ${point.latitude.toStringAsFixed(4)},${point.longitude.toStringAsFixed(4)}";
                 });
                 _calculatePrice();
               }
             },
           ),
           children: [
-            // YANDEX MAPS TILES API (Sizning API kalitingiz ulandi)
+            // O'TA TINIQ VA ZAMONAVIY YANDEX STILIDAGI XARITA QATLAMI
             TileLayer(
-              urlTemplate: 'https://core-renderer-tiles.maps.yandex.net/tiles?v=2.26.0&x={x}&y={y}&z={z}&scale=1&lang=ru_RU',
-              additionalOptions: const {'apikey': '27ebce7c-5499-4a59-8e43-c1f231d7c910'},
+              urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+              subdomains: const ['a', 'b', 'c', 'd'],
               userAgentPackageName: 'com.elegant.taxi',
             ),
             if (_destinationLocation != null)
@@ -678,7 +678,7 @@ class _DriverViewState extends State<DriverView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(currentDriver.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-                    Text("${currentDriver.carModel} • ${currentDriver.carNumber}", style: const TextStyle(color: Colors.white70)),
+                    Text("${currentDriver.carModel} •${currentDriver.carNumber}", style: const TextStyle(color: Colors.white70)),
                     const SizedBox(height: 6),
                     Text("Balans: ${currentDriver.balance} so'm", style: const TextStyle(color: Color(0xFFFFCC00), fontWeight: FontWeight.bold, fontSize: 16)),
                   ],
@@ -728,211 +728,4 @@ class _DriverViewState extends State<DriverView> {
           ],
           const Align(
             alignment: Alignment.centerLeft,
-            child: Text("Yangi tushgan zakazlar:", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: pendingOrders.isEmpty
-                ? const Center(child: Text("Yangi zakazlar yo'q...", style: TextStyle(color: Colors.grey)))
-                : ListView.builder(
-                    itemCount: pendingOrders.length,
-                    itemBuilder: (ctx, i) {
-                      final ord = pendingOrders[i];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        child: Padding(
-                          padding: const EdgeInsets.all(14.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Chip(label: Text(ord.tariff), backgroundColor: const Color(0xFFFFFBEB)),
-                                  Text("${ord.price} so'm", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-                                ],
-                              ),
-                              Text("📍 Qayerdan: ${ord.fromAddress}"),
-                              Text("🏁 Qayerga: ${ord.toAddress}"),
-                              Text("📞 Tel: ${ord.clientPhone} • ${ord.distanceKm} km", style: const TextStyle(color: Colors.grey)),
-                              const SizedBox(height: 10),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
-                                  onPressed: () => appState.acceptOrder(ord.id, currentDriver),
-                                  child: const Text("QABUL QILISH", style: TextStyle(fontWeight: FontWeight.bold)),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ==================== OPERATOR PANELI ====================
-class OperatorView extends StatefulWidget {
-  const OperatorView({super.key});
-
-  @override
-  State<OperatorView> createState() => _OperatorViewState();
-}
-
-class _OperatorViewState extends State<OperatorView> {
-  final TextEditingController _phoneCtrl = TextEditingController(text: "+998 ");
-  final TextEditingController _fromCtrl = TextEditingController();
-  final TextEditingController _toCtrl = TextEditingController();
-  final TextEditingController _kmCtrl = TextEditingController(text: "3.0");
-  String _tariff = 'Ekonom';
-
-  void _createManualOrder() {
-    if (_fromCtrl.text.isEmpty || _toCtrl.text.isEmpty) return;
-    double km = double.tryParse(_kmCtrl.text) ?? 3.0;
-    double raw = appState.baseFare + (km * appState.perKmRate);
-    int price = (raw / 500).round() * 500;
-
-    final ord = OrderModel(
-      id: "OP-${Random().nextInt(9000) + 1000}",
-      clientPhone: _phoneCtrl.text.trim(),
-      fromAddress: _fromCtrl.text.trim(),
-      toAddress: _toCtrl.text.trim(),
-      fromPoint: const LatLng(41.311081, 69.240562),
-      toPoint: const LatLng(41.321081, 69.250562),
-      tariff: _tariff,
-      distanceKm: km,
-      price: price,
-      createdAt: DateTime.now(),
-    );
-
-    appState.createOrder(ord);
-    _fromCtrl.clear();
-    _toCtrl.clear();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(14.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("📞 Qo'ng'iroq orqali zakaz berish", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  const SizedBox(height: 10),
-                  TextField(controller: _phoneCtrl, decoration: const InputDecoration(labelText: "Tel", isDense: true, border: OutlineInputBorder())),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(child: TextField(controller: _fromCtrl, decoration: const InputDecoration(labelText: "Qayerdan", isDense: true, border: OutlineInputBorder()))),
-                      const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: _toCtrl, decoration: const InputDecoration(labelText: "Qayerga", isDense: true, border: OutlineInputBorder()))),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
-                      onPressed: _createManualOrder,
-                      child: const Text("ZAKAZNI YUBORISH", style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text("Barcha zakazlar:", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          Expanded(
-            child: ListView.builder(
-              itemCount: appState.orders.length,
-              itemBuilder: (ctx, i) {
-                final o = appState.orders[i];
-                return Card(
-                  child: ListTile(
-                    title: Text("${o.fromAddress} ➔ ${o.toAddress}", style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text("Tel: ${o.clientPhone} • ${o.price} so'm • ${o.status}"),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ==================== ADMIN PANELI ====================
-class AdminView extends StatefulWidget {
-  const AdminView({super.key});
-
-  @override
-  State<AdminView> createState() => _AdminViewState();
-}
-
-class _AdminViewState extends State<AdminView> {
-  late TextEditingController _baseCtrl;
-  late TextEditingController _kmCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _baseCtrl = TextEditingController(text: appState.baseFare.toString());
-    _kmCtrl = TextEditingController(text: appState.perKmRate.toString());
-  }
-
-  void _save() {
-    int b = int.tryParse(_baseCtrl.text) ?? 4000;
-    int k = int.tryParse(_kmCtrl.text) ?? 2000;
-    appState.updateTariffs(newBase: b, newPerKm: k, newComm: appState.commissionPercent);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Saqlandi!"), backgroundColor: Colors.green));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("👑 Super-Admin Boshqaruvi (Parol: 919728847)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 12),
-      Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14.0),
-              child: Column(
-                children: [
-                  TextField(controller: _baseCtrl, decoration: const InputDecoration(labelText: "Boshlang'ich narx")),
-                  const SizedBox(height: 8),
-                  TextField(controller: _kmCtrl, decoration: const InputDecoration(labelText: "1 km narxi")),
-                  const SizedBox(height: 12),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFCC00), foregroundColor: Colors.black),
-                    onPressed: _save,
-                    child: const Text("TARIFLARNI SAQLASH"),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+            child: Text("Yangi tushgan zakazlar:", style: TextStyle(
