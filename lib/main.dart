@@ -473,7 +473,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
                       ),
                     ),
                     ListTile(
-                      leading: const Icon(Icons.Support_agent, color: Colors.grey),
+                      leading: const Icon(Icons.support_agent, color: Colors.grey),
                       title: const Text("Qayta aloqa"),
                       onTap: () => _showInfoModal("Qayta aloqa", "Dispetcherlik xizmati: 1413\nTel: +998 90 123 45 67"),
                     ),
@@ -539,7 +539,6 @@ class ClientView extends StatefulWidget {
 class _ClientViewState extends State<ClientView> {
   final MapController _mapController = MapController();
 
-  // Boshlang'ich nuqta (Qumqo'rg'on / Surxondaryo yoki GPS orqali)
   LatLng _currentLocation = wgs84ToYandex(37.8267, 67.5975);
   LatLng? _destinationLocation;
 
@@ -547,8 +546,8 @@ class _ClientViewState extends State<ClientView> {
   final TextEditingController _toController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController(text: "+998 90 267 25 80");
 
-  String _serviceTab = 'Taksi'; // 'Taksi' yoki 'Dostavka'
-  String _selectedTariff = 'Standart'; // 'Standart', 'Komfort', 'Dostavka'
+  String _serviceTab = 'Taksi';
+  String _selectedTariff = 'Standart';
   double _distanceKm = 0.0;
   int _etaMinutes = 8;
   String _wishNote = "";
@@ -795,7 +794,6 @@ class _ClientViewState extends State<ClientView> {
 
     return Stack(
       children: [
-        // 1. HAQIQIY YANDEX XARITASI QATLAMI
         FlutterMap(
           mapController: _mapController,
           options: MapOptions(
@@ -833,7 +831,6 @@ class _ClientViewState extends State<ClientView> {
             MarkerLayer(
               markers: [
                 ..._buildNearbyTaxiMarkers(),
-                // Mijoz turgan nuqta (Bek Taxi yashil lokatsiya belgisi)
                 Marker(
                   point: _currentLocation,
                   width: 64,
@@ -867,7 +864,6 @@ class _ClientViewState extends State<ClientView> {
                     ],
                   ),
                 ),
-                // Borish nuqtasi
                 if (_destinationLocation != null)
                   Marker(
                     point: _destinationLocation!,
@@ -879,8 +875,6 @@ class _ClientViewState extends State<ClientView> {
             ),
           ],
         ),
-
-        // 2. YUQORI CHAP MENYU TUGMASI (Bek Taxi uslubida)
         Positioned(
           top: MediaQuery.of(context).padding.top + 10,
           left: 14,
@@ -912,8 +906,6 @@ class _ClientViewState extends State<ClientView> {
             ),
           ),
         ),
-
-        // 3. YUQORI O'NG BONUSLAR VA TEZKOR HAYDOVCHI TUGMASI
         Positioned(
           top: MediaQuery.of(context).padding.top + 10,
           right: 14,
@@ -971,8 +963,6 @@ class _ClientViewState extends State<ClientView> {
             ],
           ),
         ),
-
-        // 4. PASTKI BUYURTMA PANELI VA GPS TUGMASI
         Positioned(
           bottom: 0,
           left: 0,
@@ -1187,12 +1177,10 @@ class _ClientViewState extends State<ClientView> {
       );
     }
 
-    // STANDART BEK TAXI BUYURTMA OYNASI
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // A manzil
         Row(
           children: [
             const SizedBox(
@@ -1213,7 +1201,6 @@ class _ClientViewState extends State<ClientView> {
           ],
         ),
         const Divider(height: 10),
-        // B manzil
         InkWell(
           onTap: _openDestinationSheet,
           child: Padding(
@@ -1240,7 +1227,6 @@ class _ClientViewState extends State<ClientView> {
           ),
         ),
         const SizedBox(height: 10),
-        // Taksi / Dostavka tugmalari
         Row(
           children: [
             GestureDetector(
@@ -1295,7 +1281,6 @@ class _ClientViewState extends State<ClientView> {
           ],
         ),
         const SizedBox(height: 12),
-        // Tarif kartochkalari (Bek Taxi uslubida)
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -1309,7 +1294,6 @@ class _ClientViewState extends State<ClientView> {
           ),
         ),
         const SizedBox(height: 10),
-        // Istaklar tugmasi
         Center(
           child: InkWell(
             onTap: _openWishesDialog,
@@ -1330,7 +1314,6 @@ class _ClientViewState extends State<ClientView> {
           ),
         ),
         const SizedBox(height: 8),
-        // Katta yashil Buyurtma berish tugmasi
         SizedBox(
           width: double.infinity,
           height: 50,
@@ -1428,7 +1411,6 @@ class _DriverViewState extends State<DriverView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Haydovchi tanlash
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
@@ -1460,7 +1442,6 @@ class _DriverViewState extends State<DriverView> {
             ),
           ),
           const SizedBox(height: 10),
-          // Haydovchi kartasi
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
