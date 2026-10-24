@@ -89,7 +89,7 @@ class AppState extends ChangeNotifier {
 
   void createOrder(OrderModel order) {
     orders.insert(0, order);
-    SystemSound.play(SystemSoundType.click); // Ovozli signal
+    SystemSound.play(SystemSoundType.click); 
     notifyListeners();
   }
 
@@ -218,7 +218,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     _determinePosition();
   }
 
-  // Dinamik marker chizish (Rasm yo'qligi sababli qulamasligi uchun)
   Future<Uint8List> _createMarkerImage(Color color, bool isCar) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
@@ -251,7 +250,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     } catch (_) {}
   }
 
-  // YANDEX DRIVING API (Haqiqiy yo'l chizish va masofa hisoblash)
+  // XATOLAR TO'G'RILANGAN _buildRoute QISMI
   Future<void> _buildRoute() async {
     if (_destinationLocation == null) return;
     
@@ -268,13 +267,13 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       final route = result.routes!.first;
       
       setState(() {
-        _distanceKm = double.parse((route.metadata.weight.distance.value / 1000).toStringAsFixed(1));
-        _etaMinutes = (route.metadata.weight.time.value / 60).round();
+        _distanceKm = double.parse(((route.metadata.weight.distance.value ?? 0.0) / 1000).toStringAsFixed(1));
+        _etaMinutes = ((route.metadata.weight.time.value ?? 0.0) / 60).round();
       });
 
       final polyline = PolylineMapObject(
         mapId: const MapObjectId('route'),
-        polyline: route.geometry,
+        polyline: Polyline(points: route.geometry),
         strokeColor: kBekGreen,
         strokeWidth: 5,
         outlineColor: Colors.black,
@@ -286,7 +285,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
         _mapObjects.add(polyline);
       });
 
-      // Avto-Zoom (yo'lni ekranga sig'dirish)
       _mapController.moveCamera(
         CameraUpdate.newGeometry(Geometry.fromBoundingBox(BoundingBox(
           southWest: Point(
@@ -354,7 +352,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // NATIVE YANDEX MAP
           YandexMap(
             mapObjects: _mapObjects,
             onMapCreated: (controller) => _mapController = controller,
@@ -370,7 +367,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             logoAlignment: const MapAlignment(horizontal: HorizontalAlignment.left, vertical: VerticalAlignment.bottom),
           ),
           
-          // Tepa tugmalar
           Positioned(
             top: 50, left: 16,
             child: FloatingActionButton.small(
@@ -388,7 +384,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             ),
           ),
 
-          // Mijozning zamonaviy paneli
           Positioned(
             bottom: 0, left: 0, right: 0,
             child: Container(
@@ -532,4 +527,3 @@ class DriverTerminalScreen extends StatelessWidget {
     );
   }
 }
-// === KODNING OXIRI ===
