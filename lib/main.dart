@@ -1,2412 +1,1962 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const ElegantTaxiApp());
 }
 
-// ============================================================================
-// MODELLAR VA TIZIM HOLATLARI
-// ============================================================================
+const String yandexApiKey = "f3f7d5ef-8357-44fe-bf9a-c6ca458c7076";
+const Color kBekGreen = Color(0xFF22A038);
+const Color kTaxiYellow = Color(0xFFFFCC00);
+const Color kDarkBg = Color(0xFF14171F);
 
-enum AppRole { customer, driver, operatorRole, superAdmin }
+// Yandex EPSG:3395 proyeksiyasini aniq GPS nuqtasiga moslashtirish
+LatLng wgs84ToYandex(double lat, double lon) {
+  const double e = 0.0818191908426;
+  final double rad = lat * pi / 180.0;
+  final double sinPhi = sin(rad);
+  final double y = log(
+    tan(pi / 4.0 + rad / 2.0) *
+        pow((1.0 - e * sinPhi) / (1.0 + e * sinPhi), e / 2.0),
+  );
+  final double adjLat = (2.0 * atan(exp(y)) - pi / 2.0) * 180.0 / pi;
+  return LatLng(adjLat, lon);
+}
 
-enum TariffType { ekonom, komfort, dostavka }
+// ==================== MODELLAR ====================
+class OrderModel {
+  final String id;
+  final String clientPhone;
+  final String fromAddress;
+  final String toAddress;
+  final LatLng fromPoint;
+  final LatLng toPoint;
+  final String tariff;
+  final double distanceKm;
+  final int price;
+  String status; // Kutilmoqda, Qabul qilindi, Yetib keldi, Safarda, Yakunlandi, Bekor qilindi
+  String? driverName;
+  String? driverCar;
+  final DateTime createdAt;
 
-enum OrderStatus {
-  searching, // Haydovchi qidirilmoqda
-  accepted,  // Haydovchi qabul qildi (yo'lda)
-  arrived,   // Haydovchi yetib keldi
-  inProgress,// Safar boshlandi
-  completed, // Safar yakunlandi
-  cancelled  // Bekor qilindi
+  OrderModel({
+    required this.id,
+    required this.clientPhone,
+    required this.fromAddress,
+    required this.toAddress,
+    required this.fromPoint,
+    required this.toPoint,
+    required this.tariff,
+    required this.distanceKm,
+    required this.price,
+    this.status = 'Kutilmoqda',
+    this.driverName,
+    this.driverCar,
+    required this.createdAt,
+  });
 }
 
 class DriverModel {
-  final String id;
+  String id;
   String name;
-  String carModel;
-  String carColor;
-  String plateNumber;
   String phone;
-  TariffType category;
-  double balance;
-  double rating;
+  String carModel;
+  String carNumber;
+  String tariffType;
+  int trips;
+  int balance;
   bool isOnline;
-  LatLng location;
-  int completedTrips;
 
   DriverModel({
     required this.id,
     required this.name,
-    required this.carModel,
-    required this.carColor,
-    required this.plateNumber,
     required this.phone,
-    this.category = TariffType.ekonom,
-    required this.balance,
-    this.rating = 4.9,
+    required this.carModel,
+    required this.carNumber,
+    this.tariffType = 'STANDART',
+    this.trips = 144,
+    this.balance = 584200,
     this.isOnline = true,
-    required this.location,
-    this.completedTrips = 0,
   });
 }
 
-class OrderModel {
-  final String id;
-  final String customerPhone;
-  final LatLng pickupLocation;
-  final LatLng destinationLocation;
-  final String pickupAddress;
-  final String destinationAddress;
-  final TariffType tariff;
-  final double distanceKm;
-  final int durationMin;
-  final int priceSom;
-  final DateTime createdAt;
-  OrderStatus status;
-  DriverModel? assignedDriver;
+// ==================== GLOBAL HOLAT ====================
+class AppState extends ChangeNotifier {
+  int stdBase = 4000;
+  int stdPerKm = 2000;
+  int comfBase = 5000;
+  int comfPerKm = 3000;
+  int delivBase = 6000;
+  int delivPerKm = 2500;
+  double commissionPercent = 10.0;
 
-  OrderModel({
-    required this.id,
-    required this.customerPhone,
-    required this.pickupLocation,
-    required this.destinationLocation,
-    required this.pickupAddress,
-    required this.destinationAddress,
-    required this.tariff,
-    required this.distanceKm,
-    required this.durationMin,
-    required this.priceSom,
-    required this.createdAt,
-    this.status = OrderStatus.searching,
-    this.assignedDriver,
-  });
-}
+  final String adminPass = "9728847";
+  bool isAdminUnlocked = false;
+  int clientBonus = 10000;
+  bool useBonus = false;
 
-// ============================================================================
-// MARKAZIY BOSHQARUVCHI (REAL-TIME STATE MANAGEMENT)
-// ============================================================================
-
-class TaxiController extends ChangeNotifier {
-  AppRole currentRole = AppRole.customer;
-  bool isAdminAuthenticated = false;
-  String _adminPassword = '9728847'; // Ekranda hech qachon ko'rsatilmaydi!
-
-  // Tarif sozlamalari
-  int basePriceEkonom = 4000;
-  int perKmEkonom = 2000;
-  int basePriceKomfort = 7000;
-  int perKmKomfort = 3000;
-  int basePriceDostavka = 6000;
-  int perKmDostavka = 2500;
-  double commissionPercent = 10.0; // Haydovchidan olinadigan komissiya (%)
-
-  // Boshlang'ich koordinata
-  LatLng currentGpsLocation = const LatLng(55.8045, 37.7082);
-  String currentGpsAddress = 'Joriy joylashuv (Bogorodskoye, 12)';
-
-  final List<DriverModel> drivers = [
+  List<OrderModel> orders = [];
+  List<DriverModel> drivers = [
     DriverModel(
-      id: 'd1',
-      name: 'Sardor Aliyev',
-      carModel: 'Chevrolet Cobalt',
-      carColor: 'Oq',
-      plateNumber: '01 A 777 AA',
-      phone: '+998 90 123 45 67',
-      category: TariffType.ekonom,
-      balance: 85000,
-      rating: 4.95,
-      isOnline: true,
-      location: const LatLng(55.8065, 37.7120),
-      completedTrips: 142,
+      id: "D1",
+      name: "Sardor Aliyev",
+      phone: "+998 90 123 45 67",
+      carModel: "Oq Chevrolet Cobalt",
+      carNumber: "01 A 777 AA",
+      tariffType: "STANDART",
+      trips: 144,
+      balance: 584200,
     ),
     DriverModel(
-      id: 'd2',
-      name: 'Jasur Karimov',
-      carModel: 'Chevrolet Gentra',
-      carColor: 'Qora',
-      plateNumber: '01 B 555 BB',
-      phone: '+998 93 555 44 33',
-      category: TariffType.komfort,
+      id: "D2",
+      name: "Jasur Karimov",
+      phone: "+998 90 987 65 43",
+      carModel: "Qora Chevrolet Gentra",
+      carNumber: "01 B 555 BB",
+      tariffType: "KOMFORT",
+      trips: 98,
       balance: 120000,
-      rating: 4.88,
-      isOnline: true,
-      location: const LatLng(55.8010, 37.7020),
-      completedTrips: 98,
     ),
     DriverModel(
-      id: 'd3',
-      name: 'Ulug‘bek Rustamov',
-      carModel: 'BYD Chazor',
-      carColor: 'Kulrang',
-      plateNumber: '01 Z 888 ZZ',
-      phone: '+998 97 777 00 11',
-      category: TariffType.komfort,
-      balance: 64000,
-      rating: 5.0,
-      isOnline: true,
-      location: const LatLng(55.7995, 37.7210),
-      completedTrips: 215,
-    ),
-    DriverModel(
-      id: 'd4',
-      name: 'Bobur Toshmatov',
-      carModel: 'Damas Labo',
-      carColor: 'Oq',
-      plateNumber: '01 D 222 DD',
-      phone: '+998 99 888 11 22',
-      category: TariffType.dostavka,
-      balance: 45000,
-      rating: 4.82,
-      isOnline: true,
-      location: const LatLng(55.8080, 37.6990),
-      completedTrips: 76,
+      id: "D3",
+      name: "Bobur Toshmatov",
+      phone: "+998 93 555 44 33",
+      carModel: "Oq Damas Labo",
+      carNumber: "01 D 222 DD",
+      tariffType: "DOSTAVKA",
+      trips: 78,
+      balance: 95000,
     ),
   ];
 
-  String selectedDriverId = 'd1';
-  final List<OrderModel> orders = [];
-  OrderModel? activeCustomerOrder;
-
-  DriverModel get currentDriver =>
-      drivers.firstWhere((d) => d.id == selectedDriverId, orElse: () => drivers.first);
-
-  List<OrderModel> get newOrders =>
-      orders.where((o) => o.status == OrderStatus.searching).toList();
-
-  OrderModel? get activeDriverOrder {
-    try {
-      return orders.firstWhere(
-        (o) =>
-            o.assignedDriver?.id == currentDriver.id &&
-            (o.status == OrderStatus.accepted ||
-                o.status == OrderStatus.arrived ||
-                o.status == OrderStatus.inProgress),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  void switchRole(AppRole role) {
-    currentRole = role;
-    notifyListeners();
-  }
-
-  bool verifyAdminPassword(String input) {
-    if (input.trim() == _adminPassword) {
-      isAdminAuthenticated = true;
-      currentRole = AppRole.superAdmin;
-      notifyListeners();
-      return true;
-    }
-    return false;
-  }
-
-  void updateAdminPassword(String newPass) {
-    if (newPass.trim().length >= 4) {
-      _adminPassword = newPass.trim();
-      notifyListeners();
-    }
-  }
-
-  void selectActiveDriver(String id) {
-    selectedDriverId = id;
-    notifyListeners();
-  }
-
-  void toggleDriverOnline(String id, bool value) {
-    final index = drivers.indexWhere((d) => d.id == id);
-    if (index != -1) {
-      drivers[index].isOnline = value;
-      notifyListeners();
-    }
-  }
-
-  // Tarif bo'yicha narxni darhol hisoblash
-  int calculatePrice(TariffType tariff, double distanceKm) {
-    int basePrice;
-    int perKm;
-    switch (tariff) {
-      case TariffType.ekonom:
-        basePrice = basePriceEkonom;
-        perKm = perKmEkonom;
-        break;
-      case TariffType.komfort:
-        basePrice = basePriceKomfort;
-        perKm = perKmKomfort;
-        break;
-      case TariffType.dostavka:
-        basePrice = basePriceDostavka;
-        perKm = perKmDostavka;
-        break;
-    }
-    final raw = basePrice + (distanceKm * perKm);
-    // 500 so'mga yaxlitlash
-    return ((raw / 500).round() * 500).clamp(basePrice, 1000000);
-  }
-
-  // Buyurtma yaratish (Mijoz yoki Operator tomonidan)
-  OrderModel createOrder({
-    required String phone,
-    required LatLng pickupLoc,
-    required LatLng destLoc,
-    required String pickupAddr,
-    required String destAddr,
-    required TariffType tariff,
-    required double distanceKm,
-    required int durationMin,
+  void saveTariffs({
+    required int sB,
+    required int sK,
+    required int cB,
+    required int cK,
+    required int dB,
+    required int dK,
+    required double comm,
   }) {
-    final price = calculatePrice(tariff, distanceKm);
-    final order = OrderModel(
-      id: 'ORD-${1000 + orders.length + 1}',
-      customerPhone: phone,
-      pickupLocation: pickupLoc,
-      destinationLocation: destLoc,
-      pickupAddress: pickupAddr,
-      destinationAddress: destAddr,
-      tariff: tariff,
-      distanceKm: distanceKm,
-      durationMin: durationMin,
-      priceSom: price,
-      createdAt: DateTime.now(),
-      status: OrderStatus.searching,
-    );
-    orders.insert(0, order);
-    activeCustomerOrder = order;
+    stdBase = sB;
+    stdPerKm = sK;
+    comfBase = cB;
+    comfPerKm = cK;
+    delivBase = dB;
+    delivPerKm = dK;
+    commissionPercent = comm;
     notifyListeners();
-    return order;
   }
 
-  // Buyurtmani bekor qilish
+  void createOrder(OrderModel order) {
+    orders.insert(0, order);
+    notifyListeners();
+  }
+
+  void updateOrderStatus(String orderId, String newStatus, DriverModel driver) {
+    final idx = orders.indexWhere((o) => o.id == orderId);
+    if (idx != -1) {
+      orders[idx].status = newStatus;
+      orders[idx].driverName = driver.name;
+      orders[idx].driverCar = "${driver.carModel} • ${driver.carNumber}";
+      if (newStatus == 'Yakunlandi') {
+        int comm = ((orders[idx].price * commissionPercent) / 100).round();
+        driver.balance -= comm;
+        driver.trips += 1;
+      }
+      notifyListeners();
+    }
+  }
+
   void cancelOrder(String orderId) {
     final idx = orders.indexWhere((o) => o.id == orderId);
     if (idx != -1) {
-      orders[idx].status = OrderStatus.cancelled;
-      if (activeCustomerOrder?.id == orderId) {
-        activeCustomerOrder = null;
-      }
+      orders[idx].status = 'Bekor qilindi';
       notifyListeners();
     }
   }
 
-  // Mijoz oynasini yangi buyurtma uchun tozalash
-  void clearCompletedCustomerOrder() {
-    activeCustomerOrder = null;
-    notifyListeners();
-  }
-
-  // Haydovchi buyurtmani qabul qilishi
-  String? acceptOrder(String orderId, {DriverModel? specificDriver}) {
-    final driver = specificDriver ?? currentDriver;
-    if (!driver.isOnline) {
-      return 'Buyurtma olish uchun avval "Onlayn" rejimiga o‘ting!';
-    }
-    final idx = orders.indexWhere((o) => o.id == orderId);
-    if (idx == -1) return 'Buyurtma topilmadi';
-
-    final order = orders[idx];
-    final commission = (order.priceSom * (commissionPercent / 100)).round();
-    if (driver.balance < commission) {
-      return 'Balansda yetarli mablag‘ yo‘q! Komissiya: $commission so‘m';
-    }
-
-    order.assignedDriver = driver;
-    order.status = OrderStatus.accepted;
-    notifyListeners();
-    return null;
-  }
-
-  // Haydovchi mijoz oldiga yetib keldi
-  void markDriverArrived(String orderId) {
-    final idx = orders.indexWhere((o) => o.id == orderId);
-    if (idx != -1) {
-      orders[idx].status = OrderStatus.arrived;
-      if (orders[idx].assignedDriver != null) {
-        orders[idx].assignedDriver!.location = orders[idx].pickupLocation;
-      }
-      notifyListeners();
-    }
-  }
-
-  // Safarni boshlash
-  void startTrip(String orderId) {
-    final idx = orders.indexWhere((o) => o.id == orderId);
-    if (idx != -1) {
-      orders[idx].status = OrderStatus.inProgress;
-      notifyListeners();
-    }
-  }
-
-  // Safarni yakunlash
-  void completeTrip(String orderId) {
-    final idx = orders.indexWhere((o) => o.id == orderId);
-    if (idx != -1) {
-      final order = orders[idx];
-      order.status = OrderStatus.completed;
-      final driver = order.assignedDriver;
-      if (driver != null) {
-        final commission = (order.priceSom * (commissionPercent / 100)).round();
-        driver.balance -= commission;
-        driver.completedTrips += 1;
-        driver.location = order.destinationLocation;
-      }
-      notifyListeners();
-    }
-  }
-
-  // Super-Admin: Tariflarni yangilash
-  void updateTariffs({
-    required int baseEkonom,
-    required int kmEkonom,
-    required int baseKomfort,
-    required int kmKomfort,
-    required int baseDostavka,
-    required int kmDostavka,
-    required double commission,
-  }) {
-    basePriceEkonom = baseEkonom;
-    perKmEkonom = kmEkonom;
-    basePriceKomfort = baseKomfort;
-    perKmKomfort = kmKomfort;
-    basePriceDostavka = baseDostavka;
-    perKmDostavka = kmDostavka;
-    commissionPercent = commission;
-    notifyListeners();
-  }
-
-  // Super-Admin: Haydovchi balansini to'ldirish
-  void topUpDriverBalance(String driverId, double amount) {
-    final idx = drivers.indexWhere((d) => d.id == driverId);
+  void addDriverBalance(String id, int amount) {
+    final idx = drivers.indexWhere((d) => d.id == id);
     if (idx != -1) {
       drivers[idx].balance += amount;
       notifyListeners();
     }
   }
 
-  // Super-Admin: Yangi haydovchi qo'shish
-  void addDriver({
-    required String name,
-    required String carModel,
-    required String carColor,
-    required String plateNumber,
-    required String phone,
-    required TariffType category,
-    required double initialBalance,
-  }) {
-    final randomOffset = (Random().nextDouble() - 0.5) * 0.015;
+  void addNewDriver(String name, String car, String num) {
     drivers.add(
       DriverModel(
-        id: 'd${drivers.length + 1}_${DateTime.now().millisecondsSinceEpoch}',
+        id: "D${drivers.length + 1}",
         name: name,
-        carModel: carModel,
-        carColor: carColor,
-        plateNumber: plateNumber,
-        phone: phone,
-        category: category,
-        balance: initialBalance,
-        location: LatLng(
-          currentGpsLocation.latitude + randomOffset,
-          currentGpsLocation.longitude + randomOffset,
-        ),
+        phone: "+998 90 000 00 00",
+        carModel: car,
+        carNumber: num,
+        balance: 50000,
       ),
     );
     notifyListeners();
   }
 }
 
-// ============================================================================
-// GEOCODING VA MARSHRUT XIZMATI (NOMINATIM + OSRM API)
-// ============================================================================
+final AppState appState = AppState();
 
-class GeoService {
-  static final HttpClient _client = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 4);
-
-  // Koordinatani haqiqiy ko'cha va manzil nomiga o'girish (Reverse Geocoding)
-  static Future<String> getAddressFromLatLng(LatLng point) async {
-    try {
-      final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?format=jsonv2'
-        '&lat=${point.latitude}&lon=${point.longitude}&zoom=18&addressdetails=1',
-      );
-      final req = await _client.getUrl(url);
-      req.headers.set('User-Agent', 'ElegantTaxiProApp/2.0');
-      req.headers.set('Accept-Language', 'uz,ru,en');
-      final res = await req.close().timeout(const Duration(seconds: 4));
-
-      if (res.statusCode == 200) {
-        final body = await res.transform(utf8.decoder).join();
-        final data = jsonDecode(body) as Map<String, dynamic>;
-        final addr = data['address'] as Map<String, dynamic>?;
-
-        if (addr != null) {
-          final road = addr['road'] ??
-              addr['pedestrian'] ??
-              addr['neighbourhood'] ??
-              addr['suburb'] ??
-              addr['residential'];
-          final house = addr['house_number'];
-          final poi = data['name'];
-          final district = addr['suburb'] ?? addr['city_district'] ?? addr['town'] ?? '';
-
-          final parts = <String>[];
-          if (poi != null && poi.toString().isNotEmpty && poi != road) {
-            parts.add(poi.toString());
-          }
-          if (road != null && road.toString().isNotEmpty) {
-            parts.add(house != null ? '$road, $house' : road.toString());
-          }
-          if (parts.isEmpty && district.toString().isNotEmpty) {
-            parts.add(district.toString());
-          }
-          if (parts.isNotEmpty) {
-            return parts.join(', ');
-          }
-        }
-        if (data['display_name'] != null) {
-          final segments = data['display_name'].toString().split(',');
-          return segments.take(2).map((e) => e.trim()).join(', ');
-        }
-      }
-    } catch (_) {
-      // Internet sust bo'lganda zaxira formatlash
-    }
-    return 'Belgilangan nuqta (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})';
-  }
-
-  // Matn orqali manzil qidirish (Nominatim Search)
-  static Future<List<Map<String, dynamic>>> searchAddress(String query) async {
-    if (query.trim().length < 2) return [];
-    try {
-      final encoded = Uri.encodeComponent(query.trim());
-      final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/search?q=$encoded&format=jsonv2&limit=6&addressdetails=1',
-      );
-      final req = await _client.getUrl(url);
-      req.headers.set('User-Agent', 'ElegantTaxiProApp/2.0');
-      req.headers.set('Accept-Language', 'uz,ru,en');
-      final res = await req.close().timeout(const Duration(seconds: 4));
-
-      if (res.statusCode == 200) {
-        final body = await res.transform(utf8.decoder).join();
-        final list = jsonDecode(body) as List<dynamic>;
-        return list.map((item) {
-          final display = item['display_name'].toString().split(',').take(3).join(', ');
-          return {
-            'title': display,
-            'latLng': LatLng(
-              double.parse(item['lat'].toString()),
-              double.parse(item['lon'].toString()),
-            ),
-          };
-        }).toList();
-      }
-    } catch (_) {}
-    return [];
-  }
-
-  // Haqiqiy avtomobil yo'li bo'ylab marshrut chizish va masofani olish (OSRM)
-  static Future<Map<String, dynamic>> getRoadRoute(LatLng start, LatLng end) async {
-    final straightDist = calculateStraightDistanceKm(start, end);
-    try {
-      final url = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/'
-        '${start.longitude},${start.latitude};${end.longitude},${end.latitude}'
-        '?overview=full&geometries=geojson',
-      );
-      final req = await _client.getUrl(url);
-      req.headers.set('User-Agent', 'ElegantTaxiProApp/2.0');
-      final res = await req.close().timeout(const Duration(seconds: 4));
-
-      if (res.statusCode == 200) {
-        final body = await res.transform(utf8.decoder).join();
-        final data = jsonDecode(body) as Map<String, dynamic>;
-        final routes = data['routes'] as List<dynamic>?;
-        if (routes != null && routes.isNotEmpty) {
-          final route = routes.first as Map<String, dynamic>;
-          final distanceMeters = (route['distance'] as num).toDouble();
-          final durationSeconds = (route['duration'] as num).toDouble();
-          final coords = (route['geometry']['coordinates'] as List<dynamic>)
-              .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
-              .toList();
-
-          return {
-            'points': coords,
-            'distanceKm': double.parse((distanceMeters / 1000).toStringAsFixed(1)),
-            'durationMin': max(2, (durationSeconds / 60).round()),
-          };
-        }
-      }
-    } catch (_) {}
-
-    // Offline yoki javob kechiksa zaxira hisob
-    final roadDist = double.parse((straightDist * 1.25).toStringAsFixed(1));
-    return {
-      'points': <LatLng>[start, end],
-      'distanceKm': roadDist,
-      'durationMin': max(3, (roadDist * 2.2).round()),
-    };
-  }
-
-  static double calculateStraightDistanceKm(LatLng a, LatLng b) {
-    const distance = Distance();
-    final km = distance.as(LengthUnit.Kilometer, a, b);
-    return double.parse(km.toStringAsFixed(1));
-  }
-}
-
-// ============================================================================
-// ASOSIY ILOVA VA YON MENYU (DRAWER)
-// ============================================================================
-
-class ElegantTaxiApp extends StatefulWidget {
+// ==================== ASOSIY ILOVA ====================
+class ElegantTaxiApp extends StatelessWidget {
   const ElegantTaxiApp({super.key});
-
-  @override
-  State<ElegantTaxiApp> createState() => _ElegantTaxiAppState();
-}
-
-class _ElegantTaxiAppState extends State<ElegantTaxiApp> {
-  final TaxiController controller = TaxiController();
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Elegant Taxi',
+      title: 'Bek & Elegant Taxi',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: const Color(0xFFFFC107),
-        scaffoldBackgroundColor: const Color(0xFFF6F7FB),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF14171F),
-          foregroundColor: Color(0xFFFFC107),
-          elevation: 0,
-        ),
+        primaryColor: kBekGreen,
+        scaffoldBackgroundColor: const Color(0xFFF5F6F8),
+        fontFamily: 'Roboto',
       ),
-      home: AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) {
-          return MainShellScreen(controller: controller);
-        },
-      ),
+      home: const RoleContainerScreen(),
     );
   }
 }
 
-class MainShellScreen extends StatelessWidget {
-  final TaxiController controller;
-  const MainShellScreen({super.key, required this.controller});
+class RoleContainerScreen extends StatefulWidget {
+  const RoleContainerScreen({super.key});
 
-  void _openAdminLoginDialog(BuildContext context) {
-    if (controller.isAdminAuthenticated) {
-      controller.switchRole(AppRole.superAdmin);
-      return;
+  @override
+  State<RoleContainerScreen> createState() => _RoleContainerScreenState();
+}
+
+class _RoleContainerScreenState extends State<RoleContainerScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  int _selectedRole = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    appState.addListener(_onStateChanged);
+  }
+
+  @override
+  void dispose() {
+    appState.removeListener(_onStateChanged);
+    super.dispose();
+  }
+
+  void _onStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _selectRole(int roleIndex) {
+    Navigator.pop(context);
+    if (roleIndex == 3 && !appState.isAdminUnlocked) {
+      _showAdminPasswordDialog();
+    } else {
+      setState(() => _selectedRole = roleIndex);
     }
+  }
 
-    final passCtrl = TextEditingController();
-    String? errorText;
-
+  void _showAdminPasswordDialog() {
+    final TextEditingController passCtrl = TextEditingController();
     showDialog(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Row(
-                children: [
-                  Icon(Icons.shield_outlined, color: Color(0xFFFFA000)),
-                  SizedBox(width: 10),
-                  Text('Super-Admin Himoyasi', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: passCtrl,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      labelText: 'Maxfiy parolni kiriting',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      errorText: errorText,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Bekor qilish'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFFC107),
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: () {
-                    if (controller.verifyAdminPassword(passCtrl.text)) {
-                      Navigator.pop(ctx);
-                    } else {
-                      setDialogState(() {
-                        errorText = 'Parol noto‘g‘ri!';
-                      });
-                    }
-                  },
-                  child: const Text('KIRISH', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.lock, color: kBekGreen),
+            SizedBox(width: 8),
+            Text("Super-Admin Kirish"),
+          ],
+        ),
+        content: TextField(
+          controller: passCtrl,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            hintText: "Parolni kiriting (9728847)",
+            filled: true,
+            fillColor: Colors.grey.shade100,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Bekor qilish", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kBekGreen,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              if (passCtrl.text.trim() == appState.adminPass) {
+                appState.isAdminUnlocked = true;
+                Navigator.pop(ctx);
+                setState(() => _selectedRole = 3);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Parol noto'g'ri!"), backgroundColor: Colors.red),
+                );
+              }
+            },
+            child: const Text("KIRISH"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showInfoModal(String title, String body) {
+    Navigator.pop(context);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(body),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Yopish"),
+          ),
+        ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    String title;
-    switch (controller.currentRole) {
-      case AppRole.customer:
-        title = 'ELEGANT TAXI';
-        break;
-      case AppRole.driver:
-        title = 'HAYDOVCHI TERMINALI';
-        break;
-      case AppRole.operatorRole:
-        title = 'OPERATOR MARKAZI';
-        break;
-      case AppRole.superAdmin:
-        title = 'SUPER-ADMIN BOSHQARUVI';
-        break;
-    }
+    final int pendingCount = appState.orders.where((o) => o.status == 'Kutilmoqda').length;
+
+    String roleTitle = "HAYDOVCHI TERMINALI";
+    if (_selectedRole == 2) roleTitle = "OPERATOR MARKAZI";
+    if (_selectedRole == 3) roleTitle = "SUPER-ADMIN BOSHQARUVI";
 
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            const Icon(Icons.local_taxi_rounded, size: 22),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, letterSpacing: 0.5),
-                overflow: TextOverflow.ellipsis,
+      key: _scaffoldKey,
+      resizeToAvoidBottomInset: false,
+      appBar: _selectedRole == 0
+          ? null
+          : AppBar(
+              backgroundColor: kDarkBg,
+              iconTheme: const IconThemeData(color: kTaxiYellow),
+              title: Text(
+                roleTitle,
+                style: const TextStyle(color: kTaxiYellow, fontWeight: FontWeight.bold, fontSize: 15),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          if (controller.currentRole != AppRole.customer)
-            TextButton.icon(
-              onPressed: () => controller.switchRole(AppRole.customer),
-              icon: const Icon(Icons.person, color: Colors.white, size: 18),
-              label: const Text('Mijoz', style: TextStyle(color: Colors.white)),
-            ),
-          if (controller.currentRole == AppRole.customer && controller.newOrders.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ActionChip(
-                backgroundColor: Colors.green.shade700,
-                avatar: const Icon(Icons.notifications_active, color: Colors.white, size: 16),
-                label: Text(
-                  'Haydovchi (${controller.newOrders.length})',
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+              actions: [
+                TextButton.icon(
+                  onPressed: () => setState(() => _selectedRole = 0),
+                  icon: const Icon(Icons.person, color: Colors.white, size: 18),
+                  label: const Text("Mijoz", style: TextStyle(color: Colors.white)),
                 ),
-                onPressed: () => controller.switchRole(AppRole.driver),
-              ),
+              ],
             ),
-        ],
-      ),
       drawer: Drawer(
-        child: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 52, 20, 24),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF14171F), Color(0xFF252A38)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+        backgroundColor: Colors.white,
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 26,
+                      backgroundColor: Colors.green.shade50,
+                      child: const Icon(Icons.person_outline, color: kBekGreen, size: 30),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "Sarvarbek",
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: kBekGreen,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              "Bonus: ${appState.clientBonus}",
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFFFC107),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.local_taxi, size: 32, color: Colors.black),
-                  ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'ELEGANT TAXI PRO',
-                    style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Yagona tezkor dispetcherlik tizimi',
-                    style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-            ListTile(
-              selected: controller.currentRole == AppRole.customer,
-              leading: const Icon(Icons.map_rounded, color: Colors.blue),
-              title: const Text('Mijoz (Taksi chaqirish)', style: TextStyle(fontWeight: FontWeight.w600)),
-              onTap: () {
-                Navigator.pop(context);
-                controller.switchRole(AppRole.customer);
-              },
-            ),
-            ListTile(
-              selected: controller.currentRole == AppRole.driver,
-              leading: const Icon(Icons.drive_eta_rounded, color: Colors.green),
-              title: const Text('Haydovchi rejimi', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text('${controller.newOrders.length} ta yangi buyurtma'),
-              trailing: controller.newOrders.isNotEmpty
-                  ? CircleAvatar(
-                      radius: 12,
-                      backgroundColor: Colors.red,
+              const Divider(height: 1),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(left: 16, top: 12, bottom: 4),
                       child: Text(
-                        '${controller.newOrders.length}',
-                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                        "TIZIM ROLLARI (4 TA REJIM)",
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey),
                       ),
-                    )
-                  : null,
-              onTap: () {
-                Navigator.pop(context);
-                controller.switchRole(AppRole.driver);
-              },
-            ),
-            ListTile(
-              selected: controller.currentRole == AppRole.operatorRole,
-              leading: const Icon(Icons.support_agent_rounded, color: Colors.orange),
-              title: const Text('Operator paneli', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: const Text('Qo‘lda buyurtma va nazorat'),
-              onTap: () {
-                Navigator.pop(context);
-                controller.switchRole(AppRole.operatorRole);
-              },
-            ),
-            const Divider(),
-            ListTile(
-              selected: controller.currentRole == AppRole.superAdmin,
-              leading: const Icon(Icons.admin_panel_settings_rounded, color: Colors.redAccent),
-              // Parol bu yerda umuman ko'rinmaydi!
-              title: const Text('Super-Admin', style: TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: const Text('Tariflar, haydovchilar va balans'),
-              onTap: () {
-                Navigator.pop(context);
-                _openAdminLoginDialog(context);
-              },
-            ),
-          ],
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.map, color: kBekGreen),
+                      title: const Text("Mijoz (Taksi chaqirish)", style: TextStyle(fontWeight: FontWeight.w600)),
+                      selected: _selectedRole == 0,
+                      onTap: () => _selectRole(0),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.local_taxi, color: Colors.green),
+                      title: const Text("Haydovchi rejimi", style: TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text("$pendingCount ta yangi buyurtma"),
+                      trailing: pendingCount > 0
+                          ? CircleAvatar(
+                              radius: 11,
+                              backgroundColor: Colors.red,
+                              child: Text(
+                                "$pendingCount",
+                                style: const TextStyle(color: Colors.white, fontSize: 11),
+                              ),
+                            )
+                          : null,
+                      selected: _selectedRole == 1,
+                      onTap: () => _selectRole(1),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.headset_mic, color: Colors.orange),
+                      title: const Text("Operator paneli", style: TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: const Text("Qo'lda buyurtma va nazorat"),
+                      selected: _selectedRole == 2,
+                      onTap: () => _selectRole(2),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.admin_panel_settings, color: Colors.redAccent),
+                      title: const Text("Super-Admin", style: TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: const Text("Tariflar, haydovchilar va balans"),
+                      selected: _selectedRole == 3,
+                      onTap: () => _selectRole(3),
+                    ),
+                    const Divider(),
+                    ListTile(
+                      leading: const Icon(Icons.history, color: Colors.grey),
+                      title: const Text("Buyurtmalar tarixi"),
+                      onTap: () => _showInfoModal(
+                        "Buyurtmalar tarixi",
+                        "Jami bajarilgan buyurtmalar soni: ${appState.orders.length} ta",
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.favorite_border, color: Colors.grey),
+                      title: const Text("Sevimli manzillar"),
+                      onTap: () => _showInfoModal("Sevimli manzillar", "Hozircha saqlangan manzillar yo'q."),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.info_outline, color: Colors.grey),
+                      title: const Text("Kompaniya haqida"),
+                      subtitle: const Text("Bek & Elegant Taxi"),
+                      onTap: () => _showInfoModal(
+                        "Kompaniya haqida",
+                        "Elegant & Bek Taxi — Yandex MapKit tizimida ishlovchi zamonaviy taksi xizmati.",
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.Support_agent, color: Colors.grey),
+                      title: const Text("Qayta aloqa"),
+                      onTap: () => _showInfoModal("Qayta aloqa", "Dispetcherlik xizmati: 1413\nTel: +998 90 123 45 67"),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: kBekGreen,
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.local_taxi, color: Colors.white),
+                      SizedBox(width: 10),
+                      Text(
+                        "Bek & Elegant Taxi",
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       body: IndexedStack(
-        index: controller.currentRole.index,
+        index: _selectedRole,
         children: [
-          CustomerScreen(controller: controller),
-          DriverScreen(controller: controller),
-          OperatorScreen(controller: controller),
-          SuperAdminScreen(controller: controller),
+          ClientView(
+            onOpenDrawer: () => _scaffoldKey.currentState?.openDrawer(),
+            onQuickRoleSwitch: (r) => setState(() => _selectedRole = r),
+          ),
+          const DriverView(),
+          const OperatorView(),
+          const AdminView(),
         ],
       ),
     );
   }
 }
 
-// ============================================================================
-// 1. MIJOZ EKRANI (HAQIQIY MANZILLAR, MARSHRUT VA JONLI BUYURTMA HOLATI)
-// ============================================================================
+// ==================== 1. MIJOZ EKRANI (BEK TAXI + YANDEX MAP) ====================
+class ClientView extends StatefulWidget {
+  final VoidCallback onOpenDrawer;
+  final ValueChanged<int> onQuickRoleSwitch;
 
-class CustomerScreen extends StatefulWidget {
-  final TaxiController controller;
-  const CustomerScreen({super.key, required this.controller});
+  const ClientView({
+    super.key,
+    required this.onOpenDrawer,
+    required this.onQuickRoleSwitch,
+  });
 
   @override
-  State<CustomerScreen> createState() => _CustomerScreenState();
+  State<ClientView> createState() => _ClientViewState();
 }
 
-class _CustomerScreenState extends State<CustomerScreen> {
+class _ClientViewState extends State<ClientView> {
   final MapController _mapController = MapController();
-  final TextEditingController _phoneController = TextEditingController(text: '+998 90 ');
 
-  LatLng? _destinationPoint;
-  String _destinationAddress = '';
-  bool _isLoadingAddress = false;
+  // Boshlang'ich nuqta (Qumqo'rg'on / Surxondaryo yoki GPS orqali)
+  LatLng _currentLocation = wgs84ToYandex(37.8267, 67.5975);
+  LatLng? _destinationLocation;
 
-  List<LatLng> _routePoints = [];
+  final TextEditingController _fromController = TextEditingController(text: "Baraka Savdo, Qumqo'rg'on");
+  final TextEditingController _toController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController(text: "+998 90 267 25 80");
+
+  String _serviceTab = 'Taksi'; // 'Taksi' yoki 'Dostavka'
+  String _selectedTariff = 'Standart'; // 'Standart', 'Komfort', 'Dostavka'
   double _distanceKm = 0.0;
-  int _durationMin = 0;
-  TariffType _selectedTariff = TariffType.ekonom;
-  int _requestToken = 0;
+  int _etaMinutes = 8;
+  String _wishNote = "";
+  OrderModel? _activeOrder;
 
-  // Xaritadan joy bosilganda darhol masofani hisoblash va ko'cha nomini olish
-  Future<void> _selectDestinationOnMap(LatLng point, {String? presetAddress}) async {
-    final token = ++_requestToken;
-    final pickup = widget.controller.currentGpsLocation;
-    final instantDist = max(0.5, GeoService.calculateStraightDistanceKm(pickup, point) * 1.2);
+  @override
+  void initState() {
+    super.initState();
+    _determinePosition();
+  }
+
+  Future<void> _determinePosition() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return;
+      }
+
+      Position pos = await Geolocator.getCurrentPosition();
+      final LatLng converted = wgs84ToYandex(pos.latitude, pos.longitude);
+      setState(() {
+        _currentLocation = converted;
+        _fromController.text = "Joriy joylashuv (${pos.latitude.toStringAsFixed(3)}, ${pos.longitude.toStringAsFixed(3)})";
+      });
+      _mapController.move(_currentLocation, 15.0);
+    } catch (_) {}
+  }
+
+  int _getTariffPrice(String tariffName) {
+    int base = appState.stdBase;
+    int perKm = appState.stdPerKm;
+    if (tariffName == 'Komfort') {
+      base = appState.comfBase;
+      perKm = appState.comfPerKm;
+    } else if (tariffName == 'Dostavka') {
+      base = appState.delivBase;
+      perKm = appState.delivPerKm;
+    }
+    if (_destinationLocation == null || _distanceKm <= 0) {
+      return base;
+    }
+    double raw = base + (_distanceKm * perKm);
+    return (raw / 500).round() * 500;
+  }
+
+  void _recalculateDistance() {
+    if (_destinationLocation == null) {
+      setState(() {
+        _distanceKm = 0.0;
+        _etaMinutes = 8;
+      });
+      return;
+    }
+    const double earthRadius = 6371.0;
+    double dLat = (_destinationLocation!.latitude - _currentLocation.latitude) * pi / 180.0;
+    double dLon = (_destinationLocation!.longitude - _currentLocation.longitude) * pi / 180.0;
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_currentLocation.latitude * pi / 180.0) *
+            cos(_destinationLocation!.latitude * pi / 180.0) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    double dist = earthRadius * c * 1.3;
+    if (dist < 1.0) dist = 1.0;
 
     setState(() {
-      _destinationPoint = point;
-      _distanceKm = double.parse(instantDist.toStringAsFixed(1));
-      _durationMin = max(3, (_distanceKm * 2.2).round());
-      _routePoints = [pickup, point];
-      _isLoadingAddress = presetAddress == null;
-      _destinationAddress = presetAddress ?? 'Manzil aniqlanmoqda...';
-    });
-
-    // Parallel ravishda ko'cha nomi va avtomobil yo'li marshrutini olish
-    final results = await Future.wait([
-      presetAddress != null ? Future.value(presetAddress) : GeoService.getAddressFromLatLng(point),
-      GeoService.getRoadRoute(pickup, point),
-    ]);
-
-    if (!mounted || token != _requestToken) return;
-
-    final resolvedAddress = results[0] as String;
-    final routeData = results[1] as Map<String, dynamic>;
-
-    setState(() {
-      _destinationAddress = resolvedAddress;
-      _isLoadingAddress = false;
-      _routePoints = routeData['points'] as List<LatLng>;
-      _distanceKm = routeData['distanceKm'] as double;
-      _durationMin = routeData['durationMin'] as int;
+      _distanceKm = double.parse(dist.toStringAsFixed(1));
+      _etaMinutes = max(3, (dist * 1.8).round());
     });
   }
 
-  // Qidiruv oynasi orqali manzil yozib topish
-  void _openAddressSearchModal() {
+  void _openDestinationSheet() {
+    final TextEditingController searchCtrl = TextEditingController(text: _toController.text);
+    final List<String> presets = [
+      "Markaziy Bozor",
+      "Avtoshohbekat",
+      "Yangishahar mahallasi",
+      "Denov markazi",
+      "Temir yo'l vokzali",
+    ];
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (ctx) {
-        final searchCtrl = TextEditingController();
-        List<Map<String, dynamic>> searchResults = [];
-        bool searching = false;
-        Timer? debounce;
-
-        return StatefulBuilder(
-          builder: (ctx, setModalState) {
-            void runSearch(String text) {
-              debounce?.cancel();
-              if (text.trim().length < 2) {
-                setModalState(() {
-                  searchResults = [];
-                  searching = false;
-                });
-                return;
-              }
-              setModalState(() => searching = true);
-              debounce = Timer(const Duration(milliseconds: 350), () async {
-                final res = await GeoService.searchAddress(text);
-                if (ctx.mounted) {
-                  setModalState(() {
-                    searchResults = res;
-                    searching = false;
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: searchCtrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search, color: kBekGreen),
+                hintText: "Ko'cha, bino yoki mo'ljalni yozing...",
+                filled: true,
+                fillColor: Colors.grey.shade100,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              onSubmitted: (val) {
+                if (val.trim().isNotEmpty) {
+                  setState(() {
+                    _toController.text = val.trim();
+                    _destinationLocation ??= LatLng(
+                      _currentLocation.latitude + 0.015,
+                      _currentLocation.longitude + 0.015,
+                    );
                   });
+                  _recalculateDistance();
                 }
-              });
-            }
+                Navigator.pop(ctx);
+              },
+            ),
+            const SizedBox(height: 10),
+            const Text("Tezkor manzillar:", style: TextStyle(color: Colors.grey, fontSize: 12)),
+            ...presets.map(
+              (place) => ListTile(
+                dense: true,
+                leading: const Icon(Icons.location_on_outlined, color: kBekGreen),
+                title: Text(place),
+                onTap: () {
+                  final double offset = (presets.indexOf(place) + 1) * 0.008;
+                  setState(() {
+                    _toController.text = place;
+                    _destinationLocation = LatLng(
+                      _currentLocation.latitude + offset,
+                      _currentLocation.longitude + offset,
+                    );
+                  });
+                  _recalculateDistance();
+                  Navigator.pop(ctx);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                top: 16,
-                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 45,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: searchCtrl,
-                    autofocus: true,
-                    onChanged: runSearch,
-                    decoration: InputDecoration(
-                      hintText: 'Ko‘cha, bino yoki mo‘ljalni yozing...',
-                      prefixIcon: const Icon(Icons.search, color: Colors.amber),
-                      suffixIcon: searching
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-                            )
-                          : null,
-                      filled: true,
-                      fillColor: Colors.grey.shade100,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (searchResults.isEmpty && !searching)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Text(
-                        'Manzil nomini yozing yoki xaritadan istalgan joyga bosing',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 280),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: searchResults.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final item = searchResults[i];
-                        return ListTile(
-                          leading: const Icon(Icons.location_on, color: Colors.redAccent),
-                          title: Text(
-                            item['title'] as String,
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                          ),
-                          onTap: () {
-                            final pt = item['latLng'] as LatLng;
-                            final title = item['title'] as String;
-                            Navigator.pop(ctx);
-                            _mapController.move(pt, 15);
-                            _selectDestinationOnMap(pt, presetAddress: title);
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+  void _openWishesDialog() {
+    final TextEditingController noteCtrl = TextEditingController(text: _wishNote);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text("Buyurtma uchun istaklar"),
+        content: TextField(
+          controller: noteCtrl,
+          decoration: const InputDecoration(
+            hintText: "Masalan: Konditsioner, yukxona bo'sh bo'lsin...",
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Bekor qilish")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
+            onPressed: () {
+              setState(() => _wishNote = noteCtrl.text.trim());
+              Navigator.pop(ctx);
+            },
+            child: const Text("Saqlash"),
+          ),
+        ],
+      ),
     );
   }
 
   void _submitOrder() {
-    if (_destinationPoint == null) {
+    if (_destinationLocation == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Iltimos, xaritadan boradigan manzilingizni belgilang!'),
+          content: Text("Iltimos, xaritadan boradigan manzilingizni bosing yoki yozing!"),
           backgroundColor: Colors.redAccent,
         ),
       );
       return;
     }
 
-    final cleanPhone = _phoneController.text.trim();
-    if (cleanPhone.length < 9) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Telefon raqamingizni to‘liq kiriting!'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
-    FocusScope.of(context).unfocus();
-    widget.controller.createOrder(
-      phone: cleanPhone,
-      pickupLoc: widget.controller.currentGpsLocation,
-      destLoc: _destinationPoint!,
-      pickupAddr: widget.controller.currentGpsAddress,
-      destAddr: _destinationAddress,
+    final int finalPrice = _getTariffPrice(_selectedTariff);
+    final newOrder = OrderModel(
+      id: "ORD-${Random().nextInt(9000) + 1000}",
+      clientPhone: _phoneController.text.trim(),
+      fromAddress: _fromController.text.trim(),
+      toAddress: _toController.text.trim().isEmpty ? "Xaritadan tanlangan nuqta" : _toController.text.trim(),
+      fromPoint: _currentLocation,
+      toPoint: _destinationLocation!,
       tariff: _selectedTariff,
       distanceKm: _distanceKm,
-      durationMin: _durationMin,
+      price: finalPrice,
+      createdAt: DateTime.now(),
     );
+
+    appState.createOrder(newOrder);
+    setState(() => _activeOrder = newOrder);
+  }
+
+  List<Marker> _buildNearbyTaxiMarkers() {
+    final List<Offset> offsets = [
+      const Offset(0.004, 0.003),
+      const Offset(-0.003, 0.005),
+      const Offset(0.005, -0.004),
+      const Offset(-0.004, -0.003),
+    ];
+    return offsets
+        .map(
+          (off) => Marker(
+            point: LatLng(_currentLocation.latitude + off.dx, _currentLocation.longitude + off.dy),
+            width: 34,
+            height: 34,
+            child: Container(
+              decoration: BoxDecoration(
+                color: kTaxiYellow,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.black, width: 1.5),
+                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+              ),
+              child: const Icon(Icons.local_taxi, size: 18, color: Colors.black),
+            ),
+          ),
+        )
+        .toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    final activeOrder = widget.controller.activeCustomerOrder;
-    final currentPrice = widget.controller.calculatePrice(_selectedTariff, _distanceKm);
+    final int pendingCount = appState.orders.where((o) => o.status == 'Kutilmoqda').length;
 
     return Stack(
       children: [
-        // XARITA
+        // 1. HAQIQIY YANDEX XARITASI QATLAMI
         FlutterMap(
           mapController: _mapController,
           options: MapOptions(
-            initialCenter: widget.controller.currentGpsLocation,
-            initialZoom: 14.2,
-            onTap: (tapPos, latlng) {
-              if (activeOrder == null) {
-                _selectDestinationOnMap(latlng);
+            initialCenter: _currentLocation,
+            initialZoom: 14.8,
+            onTap: (tapPosition, point) {
+              if (_activeOrder == null ||
+                  _activeOrder!.status == 'Yakunlandi' ||
+                  _activeOrder!.status == 'Bekor qilindi') {
+                setState(() {
+                  _destinationLocation = point;
+                  _toController.text =
+                      "Manzil (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})";
+                });
+                _recalculateDistance();
               }
             },
           ),
           children: [
             TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.elegant.taxi.pro',
+              urlTemplate:
+                  'https://core-renderer-tiles.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}&scale=2&lang=ru_RU&apikey=$yandexApiKey',
+              userAgentPackageName: 'com.elegant.taxi',
             ),
-            if (_routePoints.length >= 2)
+            if (_destinationLocation != null)
               PolylineLayer(
                 polylines: [
                   Polyline(
-                    points: _routePoints,
+                    points: [_currentLocation, _destinationLocation!],
                     strokeWidth: 5.0,
-                    color: const Color(0xFF1976D2),
+                    color: Colors.blueAccent,
                   ),
                 ],
               ),
             MarkerLayer(
               markers: [
-                // Mijoz GPS nuqtasi
+                ..._buildNearbyTaxiMarkers(),
+                // Mijoz turgan nuqta (Bek Taxi yashil lokatsiya belgisi)
                 Marker(
-                  point: widget.controller.currentGpsLocation,
-                  width: 48,
-                  height: 48,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Center(
-                      child: Icon(Icons.my_location_rounded, color: Colors.blue, size: 28),
-                    ),
-                  ),
-                ),
-                // Onlayn haydovchilar xaritada mashina belgisi bilan ko'rinadi
-                ...widget.controller.drivers.where((d) => d.isOnline).map(
-                      (driver) => Marker(
-                        point: driver.location,
-                        width: 44,
-                        height: 44,
-                        child: Tooltip(
-                          message: '${driver.name} (${driver.carModel})',
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF14171F),
-                              shape: BoxShape.circle,
-                              border: Border.all(color: const Color(0xFFFFC107), width: 2),
-                              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                  point: _currentLocation,
+                  width: 64,
+                  height: 64,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: kBekGreen, width: 4),
+                          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                        ),
+                        child: Center(
+                          child: Text(
+                            "$_etaMinutes\nmin",
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              height: 1.0,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
                             ),
-                            child: const Icon(Icons.local_taxi, color: Color(0xFFFFC107), size: 22),
                           ),
                         ),
                       ),
-                    ),
-                // Tanlangan borish manzili (ustida manzil yozuvi bilan!)
-                if (_destinationPoint != null)
+                      Container(width: 3, height: 10, color: kBekGreen),
+                    ],
+                  ),
+                ),
+                // Borish nuqtasi
+                if (_destinationLocation != null)
                   Marker(
-                    point: _destinationPoint!,
-                    width: 220,
-                    height: 75,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF14171F),
-                            borderRadius: BorderRadius.circular(10),
-                            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-                          ),
-                          child: Text(
-                            _destinationAddress,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const Icon(Icons.location_on_rounded, color: Colors.red, size: 38),
-                      ],
-                    ),
+                    point: _destinationLocation!,
+                    width: 48,
+                    height: 48,
+                    child: const Icon(Icons.location_on, color: Colors.red, size: 44),
                   ),
               ],
             ),
           ],
         ),
 
-        // GPS MARKAZLASHTIRISH TUGMASI
+        // 2. YUQORI CHAP MENYU TUGMASI (Bek Taxi uslubida)
         Positioned(
-          top: 16,
-          right: 16,
-          child: FloatingActionButton.small(
-            heroTag: 'gps_btn',
-            backgroundColor: const Color(0xFF14171F),
-            foregroundColor: const Color(0xFFFFC107),
-            onPressed: () {
-              _mapController.move(widget.controller.currentGpsLocation, 15);
-            },
-            child: const Icon(Icons.gps_fixed_rounded),
+          top: MediaQuery.of(context).padding.top + 10,
+          left: 14,
+          child: GestureDetector(
+            onTap: widget.onOpenDrawer,
+            child: Container(
+              width: 46,
+              height: 46,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 8)],
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  const Icon(Icons.menu, color: kBekGreen, size: 26),
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
 
-        // PASTKI PANEL (BUYURTMA BERISH YOKI JONLI BUYURTMA HOLATI)
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: activeOrder == null
-              ? _buildOrderCreationPanel(currentPrice)
-              : _buildLiveOrderStatusPanel(activeOrder),
+        // 3. YUQORI O'NG BONUSLAR VA TEZKOR HAYDOVCHI TUGMASI
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 10,
+          right: 14,
+          child: Row(
+            children: [
+              if (pendingCount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kBekGreen,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                    onPressed: () => widget.onQuickRoleSwitch(1),
+                    icon: const Icon(Icons.local_taxi, size: 16),
+                    label: Text("Haydovchi ($pendingCount)"),
+                  ),
+                ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8)],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.card_giftcard, color: kBekGreen, size: 20),
+                    const SizedBox(width: 6),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text("Bonuslar", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text(
+                          "${appState.clientBonus}",
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 4),
+                    SizedBox(
+                      height: 24,
+                      child: Switch(
+                        value: appState.useBonus,
+                        activeColor: kBekGreen,
+                        onChanged: (v) => setState(() => appState.useBonus = v),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // 4. PASTKI BUYURTMA PANELI VA GPS TUGMASI
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text("Y", style: TextStyle(color: Colors.red, fontWeight: FontWeight.w900, fontSize: 13)),
+                          Text("andex Maps", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    FloatingActionButton.small(
+                      heroTag: "gps_btn",
+                      backgroundColor: Colors.white,
+                      onPressed: _determinePosition,
+                      child: const Icon(Icons.my_location, color: kBekGreen),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 16)],
+                ),
+                child: _buildBottomPanel(),
+              ),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildOrderCreationPanel(int currentPrice) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 20, offset: Offset(0, -4))],
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Qayerdan
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F6FA),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.trip_origin_rounded, color: Colors.green, size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    widget.controller.currentGpsAddress,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+  Widget _buildBottomPanel() {
+    if (_activeOrder != null && _activeOrder!.status != 'Bekor qilindi') {
+      final String st = _activeOrder!.status;
+
+      if (st == 'Yakunlandi') {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: kBekGreen, size: 32),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Safar muvaffaqiyatli yakunlandi!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        Text("Xizmatimizdan foydalanganingiz uchun rahmat.", style: TextStyle(color: Colors.black54, fontSize: 12)),
+                      ],
+                    ),
                   ),
-                ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const CircleAvatar(backgroundColor: kDarkBg, child: Icon(Icons.person, color: kTaxiYellow)),
+              title: Text("${_activeOrder!.driverName ?? 'Sardor Aliyev'} ⭐ 4.95", style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(_activeOrder!.driverCar ?? "Oq Chevrolet Cobalt • 01 A 777 AA"),
+              trailing: CircleAvatar(
+                backgroundColor: Colors.green.shade50,
+                child: const Icon(Icons.phone, color: kBekGreen),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("To'lov summasi (${_activeOrder!.distanceKm} km):", style: const TextStyle(color: Colors.grey)),
+                Text("${_activeOrder!.price} so'm", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
               ],
             ),
-          ),
-          const SizedBox(height: 10),
-
-          // Qayerga (Bosganda qidiruv ochiladi yoki xaritadan tanlanadi)
-          InkWell(
-            onTap: _openAddressSearchModal,
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F6FA),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: _destinationPoint != null ? Colors.amber.shade700 : Colors.transparent,
-                  width: 1.4,
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kTaxiYellow,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.location_on_rounded, color: Colors.redAccent, size: 22),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _destinationPoint == null
-                          ? 'Qayerga? (Xaritadan bosing yoki qidiring)'
-                          : _destinationAddress,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: _destinationPoint == null ? FontWeight.w500 : FontWeight.bold,
-                        color: _destinationPoint == null ? Colors.grey.shade600 : Colors.black87,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                  if (_isLoadingAddress)
-                    const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    const Icon(Icons.search_rounded, color: Colors.grey),
-                ],
+                onPressed: () {
+                  setState(() {
+                    _activeOrder = null;
+                    _destinationLocation = null;
+                    _toController.clear();
+                    _distanceKm = 0.0;
+                  });
+                },
+                icon: const Icon(Icons.add_location_alt),
+                label: const Text("YANGI BUYURTMA BERISH", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ),
-          ),
-          const SizedBox(height: 10),
+          ],
+        );
+      }
 
-          // Telefon raqami
-          TextField(
-            controller: _phoneController,
-            keyboardType: TextInputType.phone,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.phone_rounded, color: Colors.blue),
-              hintText: '+998 90 123 45 67',
-              filled: true,
-              fillColor: const Color(0xFFF5F6FA),
-              contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
+      String statusHeadline = "Yaqin atrofdagi haydovchi qidirilmoqda...";
+      String statusSub = "Manzil: ${_activeOrder!.toAddress}";
+      IconData statusIcon = Icons.radar;
+      Color statusColor = Colors.orange;
 
-          // Tarif tanlash (Ekonom, Komfort, Dostavka)
-          Row(
-            children: [
-              _buildTariffCard(TariffType.ekonom, 'Ekonom', Icons.local_taxi_rounded),
-              const SizedBox(width: 8),
-              _buildTariffCard(TariffType.komfort, 'Komfort', Icons.directions_car_filled_rounded),
-              const SizedBox(width: 8),
-              _buildTariffCard(TariffType.dostavka, 'Dostavka', Icons.inventory_2_rounded),
-            ],
-          ),
-          const SizedBox(height: 14),
+      if (st == 'Qabul qilindi') {
+        statusHeadline = "Haydovchi buyurtmani qabul qildi va yo'lga chiqdi!";
+        statusSub = "Taxminan 3 daqiqada yetib keladi";
+        statusIcon = Icons.local_taxi;
+        statusColor = Colors.blue;
+      } else if (st == 'Yetib keldi') {
+        statusHeadline = "Haydovchi manzilga yetib keldi, sizni kutmoqda!";
+        statusSub = _activeOrder!.driverCar ?? "";
+        statusIcon = Icons.notifications_active;
+        statusColor = Colors.deepOrange;
+      } else if (st == 'Safarda') {
+        statusHeadline = "Safar davom etmoqda — Oq yo'l!";
+        statusSub = "Borish manzili: ${_activeOrder!.toAddress}";
+        statusIcon = Icons.navigation;
+        statusColor = kBekGreen;
+      }
 
-          // Masofa, vaqt va yakuniy narx
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.route_rounded, size: 18, color: Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Masofa: ${_distanceKm.toStringAsFixed(1)} km',
-                    style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
-                  ),
-                  if (_durationMin > 0) ...[
-                    const SizedBox(width: 10),
-                    const Icon(Icons.schedule_rounded, size: 17, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text(
-                      '~$_durationMin daq',
-                      style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ],
-              ),
-              Text(
-                '$currentPrice so‘m',
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF14171F)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // Buyurtma berish tugmasi
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFFC107),
-                foregroundColor: Colors.black,
-                elevation: 2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-              onPressed: _submitOrder,
-              child: const Text(
-                'BUYURTMA BERISH',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 0.6),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTariffCard(TariffType type, String label, IconData icon) {
-    final isSelected = _selectedTariff == type;
-    final price = widget.controller.calculatePrice(type, _distanceKm);
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedTariff = type),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFFFF8E1) : const Color(0xFFF5F6FA),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isSelected ? const Color(0xFFFFC107) : Colors.transparent,
-              width: 2,
-            ),
-          ),
-          child: Column(
-            children: [
-              Icon(icon, size: 22, color: isSelected ? Colors.amber.shade900 : Colors.grey.shade600),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                  color: isSelected ? Colors.black : Colors.grey.shade700,
-                ),
-              ),
-              Text(
-                '$price so‘m',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? Colors.amber.shade900 : Colors.grey,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // MIJOZ UCHUN JONLI BUYURTMA OYNASI (HAYDOVCHI QABUL QILGANDA DARHOL O'ZGARADI!)
-  Widget _buildLiveOrderStatusPanel(OrderModel order) {
-    final driver = order.assignedDriver;
-
-    IconData statusIcon;
-    Color statusColor;
-    String statusTitle;
-    String statusSubtitle;
-
-    switch (order.status) {
-      case OrderStatus.searching:
-        statusIcon = Icons.radar_rounded;
-        statusColor = Colors.amber.shade800;
-        statusTitle = 'Yaqin atrofdagi haydovchi qidirilmoqda...';
-        statusSubtitle = 'Manzil: ${order.destinationAddress}';
-        break;
-      case OrderStatus.accepted:
-        statusIcon = Icons.directions_car_rounded;
-        statusColor = Colors.blue.shade700;
-        statusTitle = 'Haydovchi buyurtmani qabul qildi va yo‘lga chiqdi!';
-        statusSubtitle = 'Taxminan 3 daqiqada yetib keladi';
-        break;
-      case OrderStatus.arrived:
-        statusIcon = Icons.notifications_active_rounded;
-        statusColor = Colors.orange.shade800;
-        statusTitle = 'Haydovchi manzilga yetib keldi, sizni kutmoqda!';
-        statusSubtitle = '${driver?.carColor} ${driver?.carModel} (${driver?.plateNumber})';
-        break;
-      case OrderStatus.inProgress:
-        statusIcon = Icons.navigation_rounded;
-        statusColor = Colors.green.shade700;
-        statusTitle = 'Safar davom etmoqda — Oq yo‘l!';
-        statusSubtitle = 'Borish manzili: ${order.destinationAddress}';
-        break;
-      case OrderStatus.completed:
-        statusIcon = Icons.verified_rounded;
-        statusColor = Colors.teal.shade700;
-        statusTitle = 'Safar muvaffaqiyatli yakunlandi!';
-        statusSubtitle = 'Xizmatimizdan foydalanganingiz uchun rahmat.';
-        break;
-      case OrderStatus.cancelled:
-        statusIcon = Icons.cancel_rounded;
-        statusColor = Colors.red;
-        statusTitle = 'Buyurtma bekor qilindi';
-        statusSubtitle = '';
-        break;
-    }
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 20, offset: Offset(0, -4))],
-      ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
+      return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
               CircleAvatar(
-                radius: 24,
+                radius: 22,
                 backgroundColor: statusColor.withOpacity(0.15),
-                child: Icon(statusIcon, color: statusColor, size: 28),
+                child: Icon(statusIcon, color: statusColor),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      statusTitle,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      statusSubtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-                    ),
+                    Text(statusHeadline, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    Text(statusSub, style: const TextStyle(color: Colors.grey, fontSize: 12)),
                   ],
                 ),
               ),
             ],
           ),
-          const Divider(height: 24),
-
-          // Agar haydovchi biriktirilgan bo'lsa, haydovchi haqida to'liq ma'lumot
-          if (driver != null) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F6FA),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Row(
-                children: [
-                  const CircleAvatar(
-                    backgroundColor: Color(0xFF14171F),
-                    child: Icon(Icons.person, color: Color(0xFFFFC107)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              driver.name,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                            ),
-                            const SizedBox(width: 6),
-                            const Icon(Icons.star_rounded, color: Colors.amber, size: 17),
-                            Text(
-                              driver.rating.toString(),
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${driver.carColor} ${driver.carModel} • ${driver.plateNumber}',
-                          style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black87, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton.filled(
-                    style: IconButton.styleFrom(backgroundColor: Colors.green),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Haydovchiga qo‘ng‘iroq: ${driver.phone}')),
-                      );
-                    },
-                    icon: const Icon(Icons.phone, color: Colors.white),
-                  ),
-                ],
+          if (st != 'Kutilmoqda') ...[
+            const Divider(height: 18),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const CircleAvatar(backgroundColor: kDarkBg, child: Icon(Icons.person, color: kTaxiYellow)),
+              title: Text("${_activeOrder!.driverName ?? 'Sardor Aliyev'} ⭐ 4.95", style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(_activeOrder!.driverCar ?? ""),
+              trailing: CircleAvatar(
+                backgroundColor: Colors.green.shade50,
+                child: const Icon(Icons.phone, color: kBekGreen),
               ),
             ),
-            const SizedBox(height: 12),
           ],
-
+          const Divider(height: 18),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'To‘lov summasi (${order.distanceKm} km):',
-                style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
-              ),
-              Text(
-                '${order.priceSom} so‘m',
-                style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
-              ),
+              Text("To'lov summasi (${_activeOrder!.distanceKm} km):", style: const TextStyle(color: Colors.grey)),
+              Text("${_activeOrder!.price} so'm", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
             ],
           ),
-          const SizedBox(height: 14),
-
-          if (order.status == OrderStatus.searching || order.status == OrderStatus.accepted)
+          const SizedBox(height: 10),
+          if (st != 'Safarda')
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.red,
-                  side: const BorderSide(color: Colors.red),
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                onPressed: () => widget.controller.cancelOrder(order.id),
-                icon: const Icon(Icons.close),
-                label: const Text('Buyurtmani bekor qilish', style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ),
-
-          if (order.status == OrderStatus.completed)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFC107),
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  side: const BorderSide(color: Colors.redAccent),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () {
-                  setState(() {
-                    _destinationPoint = null;
-                    _destinationAddress = '';
-                    _routePoints = [];
-                    _distanceKm = 0.0;
-                    _durationMin = 0;
-                  });
-                  widget.controller.clearCompletedCustomerOrder();
+                  appState.cancelOrder(_activeOrder!.id);
+                  setState(() => _activeOrder = null);
                 },
-                icon: const Icon(Icons.add_location_alt_rounded),
-                label: const Text('YANGI BUYURTMA BERISH', style: TextStyle(fontWeight: FontWeight.bold)),
+                icon: const Icon(Icons.close, size: 18),
+                label: const Text("Buyurtmani bekor qilish"),
               ),
             ),
         ],
-      ),
-    );
-  }
-}
+      );
+    }
 
-// ============================================================================
-// 2. HAYDOVCHI TERMINALI (KO'P HAYDOVCHILAR, TEZKOR QABUL VA BOSQICHLAR)
-// ============================================================================
-
-class DriverScreen extends StatelessWidget {
-  final TaxiController controller;
-  const DriverScreen({super.key, required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    final driver = controller.currentDriver;
-    final activeOrder = controller.activeDriverOrder;
-    final incomingOrders = controller.newOrders;
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    // STANDART BEK TAXI BUYURTMA OYNASI
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Haydovchini almashtirish (Test va ko'p haydovchilar uchun qulay)
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.grey.shade300),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: driver.id,
-              isExpanded: true,
-              icon: const Icon(Icons.swap_horiz_rounded),
-              items: controller.drivers.map((d) {
-                return DropdownMenuItem(
-                  value: d.id,
-                  child: Text(
-                    'Profil: ${d.name} (${d.carColor} ${d.carModel} • ${d.plateNumber})',
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                  ),
-                );
-              }).toList(),
-              onChanged: (val) {
-                if (val != null) controller.selectActiveDriver(val);
-              },
+        // A manzil
+        Row(
+          children: [
+            const SizedBox(
+              width: 24,
+              child: Text("A", style: TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 15)),
             ),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Haydovchi asosiy kartochkasi
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: const Color(0xFF14171F),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          driver.name,
-                          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${driver.carColor} ${driver.carModel} • ${driver.plateNumber}',
-                          style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Switch(
-                    value: driver.isOnline,
-                    activeColor: Colors.greenAccent,
-                    onChanged: (val) => controller.toggleDriverOnline(driver.id, val),
-                  ),
-                ],
+            Expanded(
+              child: TextField(
+                controller: _fromController,
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: "Qayerdan olamiz?",
+                ),
               ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Balans: ${driver.balance.toInt()} so‘m',
-                    style: const TextStyle(color: Color(0xFFFFC107), fontSize: 17, fontWeight: FontWeight.w800),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: driver.isOnline ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      driver.isOnline ? 'ONLAYN (Liniyada)' : 'OFLAYN',
-                      style: TextStyle(
-                        color: driver.isOnline ? Colors.greenAccent : Colors.redAccent,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-
-        // FAOL BUYURTMA BLOKI
-        if (activeOrder != null) ...[
-          const Text(
-            'Faol buyurtmangiz:',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.green, width: 2),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          ],
+        ),
+        const Divider(height: 10),
+        // B manzil
+        InkWell(
+          onTap: _openDestinationSheet,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6.0),
+            child: Row(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Chip(
-                      label: Text(
-                        activeOrder.tariff.name.toUpperCase(),
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                      ),
-                      backgroundColor: Colors.amber.shade100,
-                    ),
-                    Text(
-                      '${activeOrder.priceSom} so‘m',
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.green),
-                    ),
-                  ],
+                const SizedBox(
+                  width: 24,
+                  child: Text("B", style: TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
-                const SizedBox(height: 8),
-                Text('Mijoz tel: ${activeOrder.customerPhone}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                Text('Qayerdan: ${activeOrder.pickupAddress}'),
-                const SizedBox(height: 4),
-                Text(
-                  'Qayerga: ${activeOrder.destinationAddress}',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Masofa: ${activeOrder.distanceKm} km (~${activeOrder.durationMin} daq)',
-                  style: const TextStyle(color: Colors.grey),
-                ),
-                const SizedBox(height: 16),
-
-                // Bosqichma-bosqich tugmalar (Mijoz ekranida darhol yangilanadi!)
-                if (activeOrder.status == OrderStatus.accepted)
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange.shade700,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () => controller.markDriverArrived(activeOrder.id),
-                      icon: const Icon(Icons.location_on),
-                      label: const Text('MANZILGA YETIB KELDIM', style: TextStyle(fontWeight: FontWeight.bold)),
+                Expanded(
+                  child: Text(
+                    _toController.text.isEmpty ? "Qayerga ketyapsiz? (Xaritadan bosing)" : _toController.text,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: _toController.text.isEmpty ? FontWeight.normal : FontWeight.w600,
+                      color: _toController.text.isEmpty ? Colors.grey : Colors.black,
                     ),
                   ),
-
-                if (activeOrder.status == OrderStatus.arrived)
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue.shade700,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () => controller.startTrip(activeOrder.id),
-                      icon: const Icon(Icons.play_arrow_rounded),
-                      label: const Text('SAFARNI BOSHLASH', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-
-                if (activeOrder.status == OrderStatus.inProgress)
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade700,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () {
-                        controller.completeTrip(activeOrder.id);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Safar yakunlandi! Mijoz ekrani ham avtomatik yangilandi.'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.check_circle_rounded),
-                      label: const Text('SAFARNI YAKUNLASH', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
+                ),
+                const Icon(Icons.search, color: Colors.grey, size: 20),
               ],
             ),
           ),
-          const SizedBox(height: 20),
-        ],
-
-        // YANGI TUSHGAN ZAKAZLAR RO'YXATI
-        const Text(
-          'Yangi tushgan buyurtmalar:',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 10),
-
-        if (incomingOrders.isEmpty)
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 48),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Center(
-              child: Text(
-                'Hozircha yangi buyurtmalar yo‘q...',
-                style: TextStyle(color: Colors.grey, fontSize: 15),
+        // Taksi / Dostavka tugmalari
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () => setState(() {
+                _serviceTab = 'Taksi';
+                _selectedTariff = 'Standart';
+              }),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                decoration: BoxDecoration(
+                  color: _serviceTab == 'Taksi' ? kBekGreen : Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  "Такси",
+                  style: TextStyle(
+                    color: _serviceTab == 'Taksi' ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
               ),
             ),
-          )
-        else
-          ...incomingOrders.map((order) {
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6)],
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => setState(() {
+                _serviceTab = 'Dostavka';
+                _selectedTariff = 'Dostavka';
+              }),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                decoration: BoxDecoration(
+                  color: _serviceTab == 'Dostavka' ? kBekGreen : Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  "Доставка",
+                  style: TextStyle(
+                    color: _serviceTab == 'Dostavka' ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            const Spacer(),
+            if (_distanceKm > 0)
+              Text(
+                "$_distanceKm km • ~$_etaMinutes daq",
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: kBekGreen),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Tarif kartochkalari (Bek Taxi uslubida)
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _buildTariffCard("Standart", "Стандарт", "8 daq", Icons.local_taxi, kTaxiYellow),
+              const SizedBox(width: 10),
+              _buildTariffCard("Komfort", "Комфорт", "10 daq", Icons.directions_car, Colors.blueGrey),
+              const SizedBox(width: 10),
+              _buildTariffCard("Dostavka", "Доставка", "12 daq", Icons.local_shipping, Colors.orange),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        // Istaklar tugmasi
+        Center(
+          child: InkWell(
+            onTap: _openWishesDialog,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 12.0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          order.tariff.name.toUpperCase(),
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                        ),
-                      ),
-                      Text(
-                        '${order.priceSom} so‘m',
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      const Icon(Icons.my_location, color: Colors.green, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text('Qayerdan: ${order.pickupAddress}')),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      const Icon(Icons.location_on, color: Colors.red, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Qayerga: ${order.destinationAddress}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      const Icon(Icons.phone, color: Colors.blue, size: 18),
-                      const SizedBox(width: 8),
-                      Text('Tel: ${order.customerPhone} • ${order.distanceKm} km'),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 46,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFC107),
-                        foregroundColor: Colors.black,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () {
-                        final err = controller.acceptOrder(order.id);
-                        if (err != null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(err), backgroundColor: Colors.red),
-                          );
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Buyurtma qabul qilindi! Mijozga xabar yuborildi.'),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        }
-                      },
-                      child: const Text('QABUL QILISH', style: TextStyle(fontWeight: FontWeight.w900)),
-                    ),
+                  const Icon(Icons.tune, color: kBekGreen, size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    _wishNote.isEmpty ? "Istaklar" : "Istak: $_wishNote",
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                   ),
                 ],
               ),
-            );
-          }),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Katta yashil Buyurtma berish tugmasi
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kBekGreen,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+              elevation: 2,
+            ),
+            onPressed: _submitOrder,
+            child: Text(
+              _destinationLocation == null
+                  ? "Buyurtma berish"
+                  : "Buyurtma berish • ${_getTariffPrice(_selectedTariff)} so'm",
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildTariffCard(String keyName, String label, String timeText, IconData carIcon, Color iconColor) {
+    final bool isSelected = _selectedTariff == keyName;
+    final int price = _getTariffPrice(keyName);
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedTariff = keyName),
+      child: Container(
+        width: 125,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? kBekGreen : Colors.grey.shade300,
+            width: isSelected ? 2.0 : 1.0,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(timeText, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+                Icon(carIcon, color: iconColor, size: 24),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            Text(
+              _destinationLocation == null ? "min $price сум" : "$price сум",
+              style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-// ============================================================================
-// 3. OPERATOR PANELI (QO'LDA BUYURTMA KIRITISH VA DISPETCHERLIK NAZORATI)
-// ============================================================================
-
-class OperatorScreen extends StatefulWidget {
-  final TaxiController controller;
-  const OperatorScreen({super.key, required this.controller});
+// ==================== 2. HAYDOVCHI TERMINALI ====================
+class DriverView extends StatefulWidget {
+  const DriverView({super.key});
 
   @override
-  State<OperatorScreen> createState() => _OperatorScreenState();
+  State<DriverView> createState() => _DriverViewState();
 }
 
-class _OperatorScreenState extends State<OperatorScreen> {
-  final _phoneCtrl = TextEditingController(text: '+998 ');
-  final _pickupCtrl = TextEditingController(text: 'Markaziy bozor');
-  final _destCtrl = TextEditingController();
-  final _kmCtrl = TextEditingController(text: '3.5');
-  TariffType _tariff = TariffType.ekonom;
+class _DriverViewState extends State<DriverView> {
+  int _driverIndex = 0;
 
-  void _createManualOrder() {
-    if (_destCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Borish manzilini kiriting!'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-    final km = double.tryParse(_kmCtrl.text) ?? 3.0;
-    widget.controller.createOrder(
-      phone: _phoneCtrl.text.trim(),
-      pickupLoc: widget.controller.currentGpsLocation,
-      destLoc: LatLng(
-        widget.controller.currentGpsLocation.latitude + 0.01,
-        widget.controller.currentGpsLocation.longitude + 0.01,
+  DriverModel get currentDriver => appState.drivers[_driverIndex];
+
+  @override
+  Widget build(BuildContext context) {
+    final pendingOrders = appState.orders.where((o) => o.status == 'Kutilmoqda').toList();
+    final activeOrders = appState.orders
+        .where((o) =>
+            (o.status == 'Qabul qilindi' || o.status == 'Yetib keldi' || o.status == 'Safarda') &&
+            o.driverName == currentDriver.name)
+        .toList();
+
+    return Padding(
+      padding: const EdgeInsets.all(14.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Haydovchi tanlash
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<int>(
+                value: _driverIndex,
+                isExpanded: true,
+                items: List.generate(
+                  appState.drivers.length,
+                  (index) {
+                    final d = appState.drivers[index];
+                    return DropdownMenuItem(
+                      value: index,
+                      child: Text(
+                        "Profil: ${d.name} (${d.carModel} • ${d.carNumber})",
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      ),
+                    );
+                  },
+                ),
+                onChanged: (val) {
+                  if (val != null) setState(() => _driverIndex = val);
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Haydovchi kartasi
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: kDarkBg,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(currentDriver.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                    Text("${currentDriver.carModel} • ${currentDriver.carNumber}", style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Balans: ${currentDriver.balance} so'm",
+                      style: const TextStyle(color: kTaxiYellow, fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ],
+                ),
+                Column(
+                  children: [
+                    Switch(
+                      value: currentDriver.isOnline,
+                      activeColor: kBekGreen,
+                      onChanged: (v) => setState(() => currentDriver.isOnline = v),
+                    ),
+                    Text(
+                      currentDriver.isOnline ? "ONLAYN (Liniyada)" : "OFLAYN",
+                      style: TextStyle(
+                        color: currentDriver.isOnline ? Colors.greenAccent : Colors.grey,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (activeOrders.isNotEmpty) ...[
+            const Text("Faol buyurtmangiz:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 8),
+            ...activeOrders.map((ord) => _buildActiveOrderCard(ord)),
+            const SizedBox(height: 12),
+          ],
+          const Text("Yangi tushgan buyurtmalar:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          const SizedBox(height: 8),
+          Expanded(
+            child: pendingOrders.isEmpty
+                ? Container(
+                    width: double.infinity,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Text("Hozircha yangi buyurtmalar yo'q...", style: TextStyle(color: Colors.grey)),
+                  )
+                : ListView.builder(
+                    itemCount: pendingOrders.length,
+                    itemBuilder: (ctx, i) {
+                      final ord = pendingOrders[i];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Chip(
+                                    label: Text(ord.tariff.toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                    backgroundColor: const Color(0xFFFFFBEB),
+                                  ),
+                                  Text("${ord.price} so'm", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: kBekGreen)),
+                                ],
+                              ),
+                              Text("🟢 Qayerdan: ${ord.fromAddress}"),
+                              const SizedBox(height: 4),
+                              Text("🔴 Qayerga: ${ord.toAddress}"),
+                              const SizedBox(height: 4),
+                              Text("📞 Tel: ${ord.clientPhone} • ${ord.distanceKm} km", style: const TextStyle(color: Colors.grey)),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 44,
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: kTaxiYellow,
+                                    foregroundColor: Colors.black,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                  onPressed: () {
+                                    appState.updateOrderStatus(ord.id, 'Qabul qilindi', currentDriver);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text("Buyurtma qabul qilindi! Mijozga xabar yuborildi."),
+                                        backgroundColor: kBekGreen,
+                                      ),
+                                    );
+                                  },
+                                  child: const Text("QABUL QILISH", style: TextStyle(fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
-      pickupAddr: _pickupCtrl.text.trim(),
-      destAddr: _destCtrl.text.trim(),
-      tariff: _tariff,
-      distanceKm: km,
-      durationMin: max(3, (km * 2.2).round()),
     );
-    _destCtrl.clear();
+  }
+
+  Widget _buildActiveOrderCard(OrderModel ord) {
+    String btnText = "MANZILGA YETIB KELDIM";
+    Color btnColor = Colors.orange;
+    String nextStatus = 'Yetib keldi';
+
+    if (ord.status == 'Yetib keldi') {
+      btnText = "▶ SAFARNI BOSHLASH";
+      btnColor = Colors.blue;
+      nextStatus = 'Safarda';
+    } else if (ord.status == 'Safarda') {
+      btnText = "✓ SAFARNI YAKUNLASH";
+      btnColor = kBekGreen;
+      nextStatus = 'Yakunlandi';
+    }
+
+    return Card(
+      color: Colors.green.shade50,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: kBekGreen, width: 1.5),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Chip(label: Text(ord.tariff.toUpperCase())),
+                Text("${ord.price} so'm", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: kBekGreen)),
+              ],
+            ),
+            Text("Mijoz tel: ${ord.clientPhone}", style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text("Qayerdan: ${ord.fromAddress}"),
+            Text("Qayerga: ${ord.toAddress}"),
+            Text("Masofa: ${ord.distanceKm} km"),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: btnColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () {
+                  appState.updateOrderStatus(ord.id, nextStatus, currentDriver);
+                  if (nextStatus == 'Yakunlandi') {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Safar yakunlandi! Mijoz ekrani ham avtomatik yangilandi."),
+                        backgroundColor: kBekGreen,
+                      ),
+                    );
+                  }
+                },
+                child: Text(btnText, style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ==================== 3. OPERATOR PANELI ====================
+class OperatorView extends StatefulWidget {
+  const OperatorView({super.key});
+
+  @override
+  State<OperatorView> createState() => _OperatorViewState();
+}
+
+class _OperatorViewState extends State<OperatorView> {
+  final TextEditingController _phoneCtrl = TextEditingController(text: "+998 91 972 88 47");
+  final TextEditingController _fromCtrl = TextEditingController(text: "Markaziy bozor");
+  final TextEditingController _toCtrl = TextEditingController();
+  final TextEditingController _kmCtrl = TextEditingController(text: "3.5");
+
+  void _sendManualOrder() {
+    if (_fromCtrl.text.trim().isEmpty || _toCtrl.text.trim().isEmpty) return;
+    final double km = double.tryParse(_kmCtrl.text) ?? 3.5;
+    final int price = ((appState.stdBase + km * appState.stdPerKm) / 500).round() * 500;
+
+    final ord = OrderModel(
+      id: "OP-${Random().nextInt(9000) + 1000}",
+      clientPhone: _phoneCtrl.text.trim(),
+      fromAddress: _fromCtrl.text.trim(),
+      toAddress: _toCtrl.text.trim(),
+      fromPoint: wgs84ToYandex(37.8267, 67.5975),
+      toPoint: wgs84ToYandex(37.8367, 67.6075),
+      tariff: 'Standart',
+      distanceKm: km,
+      price: price,
+      createdAt: DateTime.now(),
+    );
+
+    appState.createOrder(ord);
+    _toCtrl.clear();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Yangi buyurtma tizimga qo‘shildi!'), backgroundColor: Colors.green),
+      const SnackBar(content: Text("Buyurtma haydovchilarga yuborildi!"), backgroundColor: kBekGreen),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6)],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Qo‘lda tez buyurtma yaratish (Qo‘ng‘iroq orqali)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _phoneCtrl,
-                decoration: const InputDecoration(labelText: 'Mijoz telefoni', border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _pickupCtrl,
-                decoration: const InputDecoration(labelText: 'Qayerdan olish manzili', border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 10),
-              Row(
+    return Padding(
+      padding: const EdgeInsets.all(14.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(14.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    flex: 2,
-                    child: TextField(
-                      controller: _destCtrl,
-                      decoration: const InputDecoration(labelText: 'Qayerga borish manzili', border: OutlineInputBorder()),
-                    ),
+                  const Text("Qo'lda buyurtma yaratish (Qo'ng'iroq orqali)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _phoneCtrl,
+                    decoration: const InputDecoration(labelText: "Mijoz telefoni", isDense: true, border: OutlineInputBorder()),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: _kmCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(labelText: 'Masofa (km)', border: OutlineInputBorder()),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _fromCtrl,
+                    decoration: const InputDecoration(labelText: "Qayerdan olish manzili", isDense: true, border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: _toCtrl,
+                          decoration: const InputDecoration(labelText: "Qayerga borish manzili", isDense: true, border: OutlineInputBorder()),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _kmCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: "Masofa (km)", isDense: true, border: OutlineInputBorder()),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: kTaxiYellow, foregroundColor: Colors.black),
+                      onPressed: _sendManualOrder,
+                      icon: const Icon(Icons.send, size: 18),
+                      label: const Text("HAYDOVCHILARGA YUBORISH", style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 46,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFFC107),
-                    foregroundColor: Colors.black,
-                  ),
-                  onPressed: _createManualOrder,
-                  icon: const Icon(Icons.send_rounded),
-                  label: const Text('HAYDOVCHILARGA YUBORISH', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        Text(
-          'Barcha buyurtmalar monitoringi (${widget.controller.orders.length}):',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-        const SizedBox(height: 10),
-        ...widget.controller.orders.map((o) {
-          return Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              title: Text('${o.pickupAddress} → ${o.destinationAddress}', style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text(
-                'Tel: ${o.customerPhone} • Narx: ${o.priceSom} so‘m\n'
-                'Holat: ${o.status.name.toUpperCase()} '
-                '${o.assignedDriver != null ? "• Haydovchi: ${o.assignedDriver!.name}" : ""}',
-              ),
-              isThreeLine: true,
-              trailing: o.status == OrderStatus.searching
-                  ? PopupMenuButton<DriverModel>(
-                      tooltip: 'Haydovchi biriktirish',
-                      icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.blue),
-                      onSelected: (driver) {
-                        widget.controller.acceptOrder(o.id, specificDriver: driver);
-                      },
-                      itemBuilder: (_) => widget.controller.drivers
-                          .where((d) => d.isOnline)
-                          .map((d) => PopupMenuItem(value: d, child: Text('${d.name} (${d.plateNumber})')))
-                          .toList(),
-                    )
-                  : null,
             ),
-          );
-        }),
-      ],
+          ),
+          const SizedBox(height: 12),
+          Text("Barcha buyurtmalar monitoringi (${appState.orders.length}):", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          const SizedBox(height: 8),
+          Expanded(
+            child: ListView.builder(
+              itemCount: appState.orders.length,
+              itemBuilder: (ctx, i) {
+                final o = appState.orders[i];
+                return Card(
+                  child: ListTile(
+                    title: Text("${o.fromAddress} ➔ ${o.toAddress}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    subtitle: Text(
+                      "Tel: ${o.clientPhone} • Narx: ${o.price} so'm\nHolat: ${o.status} • Haydovchi: ${o.driverName ?? '-'}",
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-// ============================================================================
-// 4. SUPER-ADMIN BOSHQARUVI (MAXFIY, BARCHA TARIFLAR VA HAYDOVCHILAR BAZASI)
-// ============================================================================
-
-class SuperAdminScreen extends StatefulWidget {
-  final TaxiController controller;
-  const SuperAdminScreen({super.key, required this.controller});
+// ==================== 4. SUPER-ADMIN PANELI ====================
+class AdminView extends StatefulWidget {
+  const AdminView({super.key});
 
   @override
-  State<SuperAdminScreen> createState() => _SuperAdminScreenState();
+  State<AdminView> createState() => _AdminViewState();
 }
 
-class _SuperAdminScreenState extends State<SuperAdminScreen> {
-  late final TextEditingController _baseEkonomCtrl;
-  late final TextEditingController _kmEkonomCtrl;
-  late final TextEditingController _baseKomfortCtrl;
-  late final TextEditingController _kmKomfortCtrl;
-  late final TextEditingController _baseDostavkaCtrl;
-  late final TextEditingController _kmDostavkaCtrl;
-  late final TextEditingController _commCtrl;
+class _AdminViewState extends State<AdminView> {
+  late TextEditingController _sBaseCtrl;
+  late TextEditingController _sKmCtrl;
+  late TextEditingController _cBaseCtrl;
+  late TextEditingController _cKmCtrl;
+  late TextEditingController _dBaseCtrl;
+  late TextEditingController _dKmCtrl;
+  late TextEditingController _commCtrl;
 
   @override
   void initState() {
     super.initState();
-    final c = widget.controller;
-    _baseEkonomCtrl = TextEditingController(text: c.basePriceEkonom.toString());
-    _kmEkonomCtrl = TextEditingController(text: c.perKmEkonom.toString());
-    _baseKomfortCtrl = TextEditingController(text: c.basePriceKomfort.toString());
-    _kmKomfortCtrl = TextEditingController(text: c.perKmKomfort.toString());
-    _baseDostavkaCtrl = TextEditingController(text: c.basePriceDostavka.toString());
-    _kmDostavkaCtrl = TextEditingController(text: c.perKmDostavka.toString());
-    _commCtrl = TextEditingController(text: c.commissionPercent.toString());
+    _sBaseCtrl = TextEditingController(text: appState.stdBase.toString());
+    _sKmCtrl = TextEditingController(text: appState.stdPerKm.toString());
+    _cBaseCtrl = TextEditingController(text: appState.comfBase.toString());
+    _cKmCtrl = TextEditingController(text: appState.comfPerKm.toString());
+    _dBaseCtrl = TextEditingController(text: appState.delivBase.toString());
+    _dKmCtrl = TextEditingController(text: appState.delivPerKm.toString());
+    _commCtrl = TextEditingController(text: appState.commissionPercent.toString());
   }
 
-  void _showTopUpDialog(DriverModel driver) {
-    final amountCtrl = TextEditingController(text: '50000');
+  void _saveAll() {
+    appState.saveTariffs(
+      sB: int.tryParse(_sBaseCtrl.text) ?? 4000,
+      sK: int.tryParse(_sKmCtrl.text) ?? 2000,
+      cB: int.tryParse(_cBaseCtrl.text) ?? 5000,
+      cK: int.tryParse(_cKmCtrl.text) ?? 3000,
+      dB: int.tryParse(_dBaseCtrl.text) ?? 6000,
+      dK: int.tryParse(_dKmCtrl.text) ?? 2500,
+      comm: double.tryParse(_commCtrl.text) ?? 10.0,
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Barcha tariflar saqlandi!"), backgroundColor: kBekGreen),
+    );
+  }
+
+  void _showAddDriverDialog() {
+    final TextEditingController nameCtrl = TextEditingController();
+    final TextEditingController carCtrl = TextEditingController();
+    final TextEditingController numCtrl = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('${driver.name} balansini to‘ldirish'),
-        content: TextField(
-          controller: amountCtrl,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Summa (so‘m)',
-            border: OutlineInputBorder(),
-          ),
+        title: const Text("Yangi haydovchi qo'shish"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "F.I.Sh")),
+            TextField(controller: carCtrl, decoration: const InputDecoration(labelText: "Mashina rusumi")),
+            TextField(controller: numCtrl, decoration: const InputDecoration(labelText: "Davlat raqami")),
+          ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Bekor qilish')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Bekor qilish")),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFC107), foregroundColor: Colors.black),
+            style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
             onPressed: () {
-              final val = double.tryParse(amountCtrl.text) ?? 0;
-              if (val > 0) {
-                widget.controller.topUpDriverBalance(driver.id, val);
+              if (nameCtrl.text.isNotEmpty) {
+                appState.addNewDriver(nameCtrl.text.trim(), carCtrl.text.trim(), numCtrl.text.trim());
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('${driver.name} hisobiga ${val.toInt()} so‘m qo‘shildi!'), backgroundColor: Colors.green),
-                );
               }
             },
-            child: const Text('TO‘LDIRISH', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: const Text("Qo'shish"),
           ),
         ],
       ),
     );
   }
 
-  void _showAddDriverDialog() {
-    final nameCtrl = TextEditingController();
-    final carCtrl = TextEditingController(text: 'Chevrolet Cobalt');
-    final colorCtrl = TextEditingController(text: 'Oq');
-    final plateCtrl = TextEditingController(text: '01 M 999 MM');
-    final phoneCtrl = TextEditingController(text: '+998 90 ');
-    final balCtrl = TextEditingController(text: '50000');
-    TariffType selectedCat = TariffType.ekonom;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => AlertDialog(
-          title: const Text('Yangi haydovchi qo‘shish'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Ism-familiya')),
-                const SizedBox(height: 8),
-                TextField(controller: carCtrl, decoration: const InputDecoration(labelText: 'Avtomobil rusumi')),
-                const SizedBox(height: 8),
-                TextField(controller: colorCtrl, decoration: const InputDecoration(labelText: 'Rangi')),
-                const SizedBox(height: 8),
-                TextField(controller: plateCtrl, decoration: const InputDecoration(labelText: 'Davlat raqami')),
-                const SizedBox(height: 8),
-                TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Telefon raqami')),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<TariffType>(
-                  value: selectedCat,
-                  decoration: const InputDecoration(labelText: 'Tarif toifasi'),
-                  items: TariffType.values
-                      .map((t) => DropdownMenuItem(value: t, child: Text(t.name.toUpperCase())))
-                      .toList(),
-                  onChanged: (v) => setModalState(() => selectedCat = v ?? TariffType.ekonom),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: balCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Boshlang‘ich balans (so‘m)'),
-                ),
-              ],
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(14.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(14.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("⚙ Tariflar va komissiya sozlamalari", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  const SizedBox(height: 12),
+                  _buildTariffRow("Standart", _sBaseCtrl, _sKmCtrl),
+                  const SizedBox(height: 8),
+                  _buildTariffRow("Komfort", _cBaseCtrl, _cKmCtrl),
+                  const SizedBox(height: 8),
+                  _buildTariffRow("Dostavka", _dBaseCtrl, _dKmCtrl),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _commCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Haydovchi komissiyasi (%)",
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: kTaxiYellow, foregroundColor: Colors.black),
+                      onPressed: _saveAll,
+                      child: const Text("TARIFLARNI SAQLASH", style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Bekor qilish')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFC107), foregroundColor: Colors.black),
-              onPressed: () {
-                if (nameCtrl.text.trim().isEmpty) return;
-                widget.controller.addDriver(
-                  name: nameCtrl.text.trim(),
-                  carModel: carCtrl.text.trim(),
-                  carColor: colorCtrl.text.trim(),
-                  plateNumber: plateCtrl.text.trim(),
-                  phone: phoneCtrl.text.trim(),
-                  category: selectedCat,
-                  initialBalance: double.tryParse(balCtrl.text) ?? 50000,
-                );
-                Navigator.pop(ctx);
-              },
-              child: const Text('QO‘SHISH', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text("Haydovchilar bazasi (${appState.drivers.length}):", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: kDarkBg, foregroundColor: kTaxiYellow),
+                onPressed: _showAddDriverDialog,
+                icon: const Icon(Icons.person_add, size: 16),
+                label: const Text("Haydovchi qo'shish"),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...appState.drivers.map(
+            (d) => Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Colors.green.shade50,
+                  child: const Icon(Icons.directions_car, color: kBekGreen),
+                ),
+                title: Text("${d.name} (${d.carNumber})", style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(
+                  "${d.carModel} • ${d.tariffType} • Safarlar: ${d.trips}\nBalans: ${d.balance} so'm",
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.add_card, color: Colors.blue),
+                  onPressed: () => appState.addDriverBalance(d.id, 50000),
+                ),
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // TARIFLAR PANELI
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8)],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.tune_rounded, color: Colors.amber),
-                  SizedBox(width: 8),
-                  Text('Tariflar va komissiya sozlamalari', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _buildTariffRow('Ekonom', _baseEkonomCtrl, _kmEkonomCtrl),
-              const SizedBox(height: 10),
-              _buildTariffRow('Komfort', _baseKomfortCtrl, _kmKomfortCtrl),
-              const SizedBox(height: 10),
-              _buildTariffRow('Dostavka', _baseDostavkaCtrl, _kmDostavkaCtrl),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _commCtrl,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Haydovchi komissiyasi (%)',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFFC107),
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onPressed: () {
-                    widget.controller.updateTariffs(
-                      baseEkonom: int.tryParse(_baseEkonomCtrl.text) ?? 4000,
-                      kmEkonom: int.tryParse(_kmEkonomCtrl.text) ?? 2000,
-                      baseKomfort: int.tryParse(_baseKomfortCtrl.text) ?? 7000,
-                      kmKomfort: int.tryParse(_kmKomfortCtrl.text) ?? 3000,
-                      baseDostavka: int.tryParse(_baseDostavkaCtrl.text) ?? 6000,
-                      kmDostavka: int.tryParse(_kmDostavkaCtrl.text) ?? 2500,
-                      commission: double.tryParse(_commCtrl.text) ?? 10.0,
-                    );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Tariflar muvaffaqiyatli saqlandi!'), backgroundColor: Colors.green),
-                    );
-                  },
-                  child: const Text('TARIFLARNI SAQLASH', style: TextStyle(fontWeight: FontWeight.w800)),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-
-        // HAYDOVCHILAR RO'YXATI VA BALANS BOSHQARUVI
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Haydovchilar bazasi (${widget.controller.drivers.length}):',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF14171F),
-                foregroundColor: const Color(0xFFFFC107),
-              ),
-              onPressed: _showAddDriverDialog,
-              icon: const Icon(Icons.person_add, size: 18),
-              label: const Text('Haydovchi qo‘shish'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        ...widget.controller.drivers.map((d) {
-          return Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: d.isOnline ? Colors.green.shade100 : Colors.grey.shade200,
-                  child: Icon(
-                    Icons.directions_car,
-                    color: d.isOnline ? Colors.green.shade800 : Colors.grey,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${d.name} (${d.plateNumber})',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        '${d.carColor} ${d.carModel} • ${d.category.name.toUpperCase()} • Safarlar: ${d.completedTrips}',
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Balans: ${d.balance.toInt()} so‘m',
-                        style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.teal),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Balansni to‘ldirish',
-                  onPressed: () => _showTopUpDialog(d),
-                  icon: const Icon(Icons.add_card_rounded, color: Colors.blue),
-                ),
-              ],
-            ),
-          );
-        }),
-      ],
-    );
-  }
-
-  Widget _buildTariffRow(String title, TextEditingController baseCtrl, TextEditingController kmCtrl) {
+  Widget _buildTariffRow(String title, TextEditingController bCtrl, TextEditingController kCtrl) {
     return Row(
       children: [
-        SizedBox(
-          width: 75,
-          child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-        ),
+        SizedBox(width: 72, child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold))),
         Expanded(
           child: TextField(
-            controller: baseCtrl,
+            controller: bCtrl,
             keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: 'Boshlang‘ich (so‘m)',
-              isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            ),
+            decoration: const InputDecoration(labelText: "Boshlang'ich", isDense: true, border: OutlineInputBorder()),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: TextField(
-            controller: kmCtrl,
+            controller: kCtrl,
             keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: '1 km narxi (so‘m)',
-              isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            ),
+            decoration: const InputDecoration(labelText: "1 km narxi", isDense: true, border: OutlineInputBorder()),
           ),
         ),
       ],
     );
   }
 }
+// === KODNING OXIRI ===
