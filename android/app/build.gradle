@@ -24,7 +24,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.elegant.taxi"
-    compileSdk flutter.compileSdkVersion
+    compileSdk 34
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -43,7 +43,7 @@ android {
     defaultConfig {
         applicationId "com.elegant.taxi"
         minSdkVersion 24
-        targetSdk flutter.targetSdkVersion
+        targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
@@ -51,6 +51,8 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
         }
     }
 }
@@ -60,4 +62,5 @@ flutter {
 }
 
 dependencies {
+    implementation 'androidx.annotation:annotation:1.7.0'
 }
