@@ -9,8 +9,14 @@
         android:label="Elegant Taxi"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <!-- YANDEX MAPKIT KALITI TO'G'RIDAN-TO'G'RI MANIFESTGA BIRIKTIRILDI -->
+        <meta-data
+            android:name="com.yandex.mapkit.ApiKey"
+            android:value="f3f7d5ef-8357-44fe-bf9a-c6ca458c7076" />
+
         <activity
-            android:name="com.elegant.taxi.MainActivity"
+            android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"
