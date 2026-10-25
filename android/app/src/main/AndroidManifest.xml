@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.elegant.taxi">
+    package="com.example.elegant_taxi">
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
@@ -10,13 +10,8 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
-        <!-- YANDEX MAPKIT KALITI TO'G'RIDAN-TO'G'RI MANIFESTGA BIRIKTIRILDI -->
-        <meta-data
-            android:name="com.yandex.mapkit.ApiKey"
-            android:value="f3f7d5ef-8357-44fe-bf9a-c6ca458c7076" />
-
         <activity
-            android:name=".MainActivity"
+            android:name="com.example.elegant_taxi.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"
