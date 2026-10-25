@@ -18,17 +18,11 @@ const Color kBekGreen = Color(0xFF22A038);
 const Color kTaxiYellow = Color(0xFFFFCC00);
 const Color kDarkBg = Color(0xFF14171F);
 
-// ==================== MODELLAR ====================
 class AddressSuggestion {
   final String title;
   final String subtitle;
   final Point point;
-
-  AddressSuggestion({
-    required this.title,
-    required this.subtitle,
-    required this.point,
-  });
+  AddressSuggestion({required this.title, required this.subtitle, required this.point});
 }
 
 class OrderModel {
@@ -115,6 +109,7 @@ class DriverModel {
   int trips;
   int balance;
   bool isOnline;
+  Point? location;
 
   DriverModel({
     required this.id,
@@ -126,6 +121,7 @@ class DriverModel {
     this.trips = 0,
     this.balance = 100000,
     this.isOnline = true,
+    this.location,
   });
 
   Map<String, dynamic> toJson() => {
@@ -153,7 +149,6 @@ class DriverModel {
       );
 }
 
-// ==================== GLOBAL TIZIM (DOIMIY XOTIRA VA OVOZ BILAN) ====================
 class AppState extends ChangeNotifier {
   static const MethodChannel _nativeChannel = MethodChannel('com.example.elegant_taxi/native');
 
@@ -182,6 +177,7 @@ class AppState extends ChangeNotifier {
       tariffType: "Standart",
       trips: 144,
       balance: 584200,
+      location: const Point(latitude: 55.7520, longitude: 37.6175),
     ),
     DriverModel(
       id: "D2",
@@ -192,10 +188,10 @@ class AppState extends ChangeNotifier {
       tariffType: "Komfort",
       trips: 98,
       balance: 120000,
+      location: const Point(latitude: 55.7490, longitude: 37.6220),
     ),
   ];
 
-  // TELEFON XOTIRASIDAN O'QISH
   Future<void> loadFromStorage() async {
     try {
       final String? raw = await _nativeChannel.invokeMethod<String>('loadData');
@@ -222,7 +218,6 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // TELEFON XOTIRASIGA SAQLASH
   Future<void> saveToStorage() async {
     try {
       final Map<String, dynamic> data = {
@@ -319,6 +314,7 @@ class AppState extends ChangeNotifier {
       tariffType: tariff,
       trips: 0,
       balance: bal,
+      location: const Point(latitude: 55.75, longitude: 37.61),
     ));
     saveToStorage();
     notifyListeners();
@@ -344,7 +340,6 @@ class AppState extends ChangeNotifier {
 
 final AppState appState = AppState();
 
-// ==================== ASOSIY DASTUR ====================
 class ElegantTaxiApp extends StatelessWidget {
   const ElegantTaxiApp({super.key});
 
@@ -593,7 +588,6 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
   }
 }
 
-// ==================== 1. MIJOZ XARITASI (JONLI QIDIRUV + ISTALGAN A va B NUQTA) ====================
 class ClientMapScreen extends StatefulWidget {
   final VoidCallback onOpenMenu;
   final ValueChanged<int> onQuickRoleSwitch;
@@ -612,7 +606,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   YandexMapController? _mapController;
   final List<MapObject> _mapObjects = [];
 
-  Point _gpsLocation = const Point(latitude: 55.7165, longitude: 37.7885);
   Point _fromPoint = const Point(latitude: 55.7165, longitude: 37.7885);
   Point? _destinationLocation;
 
@@ -623,7 +616,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   String _selectedTariff = 'Standart';
   String? _activeOrderId;
   bool _isSearchingAddress = false;
-  // Xaritadan bosganda qaysi nuqtani o'zgartirish: 'to' (B nuqta) yoki 'from' (A nuqta)
   String _mapTapTarget = 'to';
 
   OrderModel? get _activeOrder {
@@ -695,7 +687,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
 
       final pt = Point(latitude: pos.latitude, longitude: pos.longitude);
       setState(() {
-        _gpsLocation = pt;
         _fromPoint = pt;
         _mapTapTarget = 'to';
       });
@@ -824,20 +815,20 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           icon: PlacemarkIcon.single(PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(startIcon), scale: 1.0)),
         ),
       );
-      _mapObjects.add(
-        PlacemarkMapObject(
-          mapId: const MapObjectId('taxi_1'),
-          point: Point(latitude: _fromPoint.latitude + 0.0022, longitude: _fromPoint.longitude + 0.0018),
-          icon: PlacemarkIcon.single(PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(taxiIcon), scale: 0.85)),
-        ),
-      );
-      _mapObjects.add(
-        PlacemarkMapObject(
-          mapId: const MapObjectId('taxi_2'),
-          point: Point(latitude: _fromPoint.latitude - 0.0018, longitude: _fromPoint.longitude + 0.0028),
-          icon: PlacemarkIcon.single(PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(taxiIcon), scale: 0.85)),
-        ),
-      );
+
+      // JONLI TAKSILAR XARITADA
+      for (int i = 0; i < appState.drivers.length; i++) {
+        final d = appState.drivers[i];
+        final pt = d.location ?? Point(latitude: _fromPoint.latitude + 0.002 * (i + 1), longitude: _fromPoint.longitude + 0.002 * (i + 1));
+        _mapObjects.add(
+          PlacemarkMapObject(
+            mapId: MapObjectId('taxi_${d.id}'),
+            point: pt,
+            icon: PlacemarkIcon.single(PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(taxiIcon), scale: 0.9)),
+          ),
+        );
+      }
+
       if (_destinationLocation != null) {
         _mapObjects.add(
           PlacemarkMapObject(
@@ -868,7 +859,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     return raw;
   }
 
-  // ==================== JONLI QIDIRUV OYNASI (A VA B NUQTALAR UCHUN) ====================
   void _openLiveAddressSearchSheet({required bool isFrom}) {
     final TextEditingController searchCtrl = TextEditingController(text: isFrom ? "" : _toAddress);
     List<AddressSuggestion> suggestions = [];
@@ -887,25 +877,15 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
 
       setModalState(() => isLoading = true);
       try {
-        // Siz turgan hudud atrofidan (+/- 35 km radiusda) birinchi navbatda qidiradi
         final session = YandexSearch.searchByText(
           searchText: q,
           geometry: Geometry.fromBoundingBox(
             BoundingBox(
-              southWest: Point(
-                latitude: _fromPoint.latitude - 0.35,
-                longitude: _fromPoint.longitude - 0.35,
-              ),
-              northEast: Point(
-                latitude: _fromPoint.latitude + 0.35,
-                longitude: _fromPoint.longitude + 0.35,
-              ),
+              southWest: Point(latitude: _fromPoint.latitude - 0.4, longitude: _fromPoint.longitude - 0.4),
+              northEast: Point(latitude: _fromPoint.latitude + 0.4, longitude: _fromPoint.longitude + 0.4),
             ),
           ),
-          searchOptions: const SearchOptions(
-            searchType: SearchType.geo,
-            resultPageSize: 10,
-          ),
+          searchOptions: const SearchOptions(searchType: SearchType.geo, resultPageSize: 10),
         );
         final res = await session.result;
         final List<AddressSuggestion> found = [];
@@ -915,11 +895,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
               final pt = item.geometry.first.point!;
               final dist = _calculateStraightDistance(_fromPoint, pt);
               String sub = item.toponymMetadata?.address.formattedAddress ?? "${dist} km uzoqlikda";
-              found.add(AddressSuggestion(
-                title: item.name,
-                subtitle: sub,
-                point: pt,
-              ));
+              found.add(AddressSuggestion(title: item.name, subtitle: sub, point: pt));
             }
           }
         }
@@ -942,26 +918,15 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           return FractionallySizedBox(
             heightFactor: 0.85,
             child: Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom,
-                left: 16,
-                right: 16,
-                top: 16,
-              ),
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 16, right: 16, top: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        isFrom ? "Qayerdan olamiz? (A nuqta)" : "Qayerga boramiz? (B nuqta)",
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
+                      Text(isFrom ? "Qayerdan olamiz? (A nuqta)" : "Qayerga boramiz? (B nuqta)", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                      IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -970,52 +935,29 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                     autofocus: true,
                     onChanged: (val) {
                       debounce?.cancel();
-                      debounce = Timer(const Duration(milliseconds: 350), () {
-                        runSearch(val, setModalState);
-                      });
+                      debounce = Timer(const Duration(milliseconds: 350), () => runSearch(val, setModalState));
                     },
                     decoration: InputDecoration(
-                      hintText: isFrom
-                          ? "Boshqa manzil yoki ko'cha nomini yozing..."
-                          : "Ko'cha, bino yoki obyektni yozing...",
+                      hintText: isFrom ? "Boshqa ko'cha yoki manzilni yozing..." : "Ko'cha, bino yoki obyektni yozing...",
                       prefixIcon: Icon(isFrom ? Icons.my_location : Icons.search, color: isFrom ? kBekGreen : Colors.red),
-                      suffixIcon: searchCtrl.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                searchCtrl.clear();
-                                runSearch("", setModalState);
-                              },
-                            )
-                          : null,
                       filled: true,
                       fillColor: Colors.grey.shade100,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide.none,
-                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
                     ),
                   ),
                   const SizedBox(height: 10),
-                  // Tezkor tugmalar: Xaritadan ko'rsatish yoki Joriy GPS joylashuv
                   Row(
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.black87,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
+                          style: OutlinedButton.styleFrom(foregroundColor: Colors.black87, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                           onPressed: () {
                             Navigator.pop(ctx);
                             setState(() => _mapTapTarget = isFrom ? 'from' : 'to');
                             ScaffoldMessenger.of(this.context).showSnackBar(
                               SnackBar(
-                                content: Text(isFrom
-                                    ? "Xaritadan A (Qayerdan olish) nuqtasini bosing!"
-                                    : "Xaritadan B (Boradigan) nuqtani bosing!"),
+                                content: Text(isFrom ? "Xaritadan A (Qayerdan) nuqtani bosing!" : "Xaritadan B (Boradigan) nuqtani bosing!"),
                                 backgroundColor: isFrom ? kBekGreen : Colors.redAccent,
-                                duration: const Duration(seconds: 2),
                               ),
                             );
                           },
@@ -1027,11 +969,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: kBekGreen,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
+                            style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                             onPressed: () {
                               Navigator.pop(ctx);
                               _determinePosition(immediateJump: false);
@@ -1044,16 +982,12 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                     ],
                   ),
                   const Divider(height: 20),
-                  if (isLoading)
-                    const LinearProgressIndicator(color: kBekGreen),
+                  if (isLoading) const LinearProgressIndicator(color: kBekGreen),
                   Expanded(
                     child: suggestions.isEmpty
                         ? Center(
                             child: Text(
-                              searchCtrl.text.trim().length < 2
-                                  ? "Manzil nomini yozishni boshlang,\no'xshash manzillar shu yerda chiqadi..."
-                                  : (isLoading ? "Qidirilmoqda..." : "Mos manzil topilmadi"),
-                              textAlign: TextAlign.center,
+                              searchCtrl.text.trim().length < 2 ? "Manzil nomini yozing..." : "Mos manzil topilmadi",
                               style: const TextStyle(color: Colors.grey),
                             ),
                           )
@@ -1066,22 +1000,11 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                               return ListTile(
                                 leading: CircleAvatar(
                                   backgroundColor: isFrom ? Colors.green.shade50 : Colors.red.shade50,
-                                  child: Icon(
-                                    Icons.location_on,
-                                    color: isFrom ? kBekGreen : Colors.red,
-                                  ),
+                                  child: Icon(Icons.location_on, color: isFrom ? kBekGreen : Colors.red),
                                 ),
                                 title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                                subtitle: Text(
-                                  item.subtitle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12, color: Colors.black54),
-                                ),
-                                trailing: Text(
-                                  "$dist km",
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: kBekGreen),
-                                ),
+                                subtitle: Text(item.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                                trailing: Text("$dist km", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: kBekGreen)),
                                 onTap: () async {
                                   Navigator.pop(ctx);
                                   if (isFrom) {
@@ -1091,14 +1014,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                                       _mapTapTarget = 'to';
                                     });
                                     await _updateMapObjects();
-                                    if (_destinationLocation != null) {
-                                      await _buildRoute();
-                                    } else if (_mapController != null) {
-                                      await _mapController!.moveCamera(
-                                        CameraUpdate.newCameraPosition(CameraPosition(target: _fromPoint, zoom: 16)),
-                                        animation: const MapAnimation(type: MapAnimationType.smooth, duration: 1.0),
-                                      );
-                                    }
+                                    if (_destinationLocation != null) await _buildRoute();
                                   } else {
                                     setState(() {
                                       _destinationLocation = item.point;
@@ -1126,11 +1042,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     if (_destinationLocation == null) {
       HapticFeedback.vibrate();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Iltimos, boradigan manzilni (B nuqtani) tanlang!"),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 2),
-        ),
+        const SnackBar(content: Text("Iltimos, boradigan manzilni tanlang!"), backgroundColor: Colors.red),
       );
       return;
     }
@@ -1168,9 +1080,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             },
             onMapTap: (point) async {
               FocusManager.instance.primaryFocus?.unfocus();
-              if (activeOrd != null &&
-                  activeOrd.status != 'Bekor qilindi' &&
-                  activeOrd.status != 'Yakunlandi') return;
+              if (activeOrd != null && activeOrd.status != 'Bekor qilindi' && activeOrd.status != 'Yakunlandi') return;
 
               if (_mapTapTarget == 'from') {
                 setState(() {
@@ -1181,9 +1091,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                 await _updateMapObjects();
                 if (_destinationLocation != null) await _buildRoute();
                 final addrName = await _reverseGeocode(point);
-                if (mounted) {
-                  setState(() => _fromAddress = addrName);
-                }
+                if (mounted) setState(() => _fromAddress = addrName);
               } else {
                 setState(() {
                   _destinationLocation = point;
@@ -1221,11 +1129,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                   Padding(
                     padding: const EdgeInsets.only(right: 8.0),
                     child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kBekGreen,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                      ),
+                      style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white, elevation: 4),
                       onPressed: () => widget.onQuickRoleSwitch(1),
                       icon: const Icon(Icons.notifications_active, size: 17),
                       label: Text("Haydovchi ($pendingCount)", style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -1271,7 +1175,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           const SizedBox(height: 6),
           const Text("Safar muvaffaqiyatli yakunlandi!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
           const SizedBox(height: 4),
-          Text("To'lov summasi: ${ord.price} so'm (${ord.distanceKm} km)", style: const TextStyle(fontSize: 15)),
+          Text("To'lov: ${ord.price} so'm (${ord.distanceKm} km)", style: const TextStyle(fontSize: 15)),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
@@ -1297,10 +1201,10 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     String statusTitle = "Haydovchi qidirilmoqda...";
     if (st == 'Qabul qilindi') {
       badgeColor = Colors.blue;
-      statusTitle = "Haydovchi yo'lga chiqdi!";
+      statusTitle = "Haydovchi qabul qildi, yo'lga chiqdi!";
     } else if (st == 'Yetib keldi') {
       badgeColor = kBekGreen;
-      statusTitle = "Haydovchi aytilgan manzilda kutmoqda!";
+      statusTitle = "Haydovchi yetib keldi, sizni kutmoqda!";
     } else if (st == 'Safarda') {
       badgeColor = Colors.purple;
       statusTitle = "Safar davom etmoqda...";
@@ -1368,7 +1272,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // A NUQTA: QAYERDAN OLISH (Endi bosiladi va boshqa joyga ham buyurtma berib bo'ladi!)
         InkWell(
           onTap: () => _openLiveAddressSearchSheet(isFrom: true),
           borderRadius: BorderRadius.circular(10),
@@ -1382,13 +1285,8 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text("Qayerdan olamiz? (O'zgartirish uchun bosing)", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      Text(
-                        _fromAddress,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                      ),
+                      const Text("Qayerdan olamiz? (Boshqa joyni tanlash)", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text(_fromAddress, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                     ],
                   ),
                 ),
@@ -1398,7 +1296,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           ),
         ),
         const Divider(height: 12),
-        // B NUQTA: QAYERGA BORISH (Jonli qidiruv ro'yxati bilan)
         InkWell(
           onTap: () => _openLiveAddressSearchSheet(isFrom: false),
           borderRadius: BorderRadius.circular(10),
@@ -1414,16 +1311,10 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                     children: [
                       const Text("Qayerga borasiz?", style: TextStyle(fontSize: 11, color: Colors.grey)),
                       Text(
-                        _isSearchingAddress
-                            ? "Manzil aniqlanmoqda..."
-                            : (_toAddress.isEmpty ? "Manzilni qidirish yoki xaritadan bosish" : _toAddress),
+                        _isSearchingAddress ? "Manzil aniqlanmoqda..." : (_toAddress.isEmpty ? "Manzilni qidirish yoki xaritadan bosish" : _toAddress),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _toAddress.isEmpty ? Colors.grey.shade600 : Colors.black,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
+                        style: TextStyle(color: _toAddress.isEmpty ? Colors.grey.shade600 : Colors.black, fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ],
                   ),
@@ -1432,10 +1323,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
-                    child: Text(
-                      "$_distanceKm km • ~$_etaMinutes daq",
-                      style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 12),
-                    ),
+                    child: Text("$_distanceKm km • ~$_etaMinutes daq", style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 12)),
                   )
                 else
                   const Icon(Icons.search, color: Colors.grey, size: 20),
@@ -1469,9 +1357,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             ),
             onPressed: _submitOrder,
             child: Text(
-              _destinationLocation == null
-                  ? "Buyurtma berish"
-                  : "Buyurtma berish • ${_getPrice(_selectedTariff)} so'm",
+              _destinationLocation == null ? "Buyurtma berish" : "Buyurtma berish • ${_getPrice(_selectedTariff)} so'm",
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ),
@@ -1506,7 +1392,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   }
 }
 
-// ==================== 2. HAYDOVCHI TERMINALI ====================
 class DriverTerminalScreen extends StatelessWidget {
   final AppState state;
   const DriverTerminalScreen({super.key, required this.state});
@@ -1516,11 +1401,7 @@ class DriverTerminalScreen extends StatelessWidget {
     final driver = state.drivers[state.activeDriverIndex];
     final pendingOrders = state.orders.where((o) => o.status == 'Kutilmoqda').toList();
     final activeOrders = state.orders
-        .where((o) =>
-            o.driverId == driver.id &&
-            o.status != 'Kutilmoqda' &&
-            o.status != 'Yakunlandi' &&
-            o.status != 'Bekor qilindi')
+        .where((o) => o.driverId == driver.id && o.status != 'Kutilmoqda' && o.status != 'Yakunlandi' && o.status != 'Bekor qilindi')
         .toList();
 
     return Padding(
@@ -1569,10 +1450,7 @@ class DriverTerminalScreen extends StatelessWidget {
                             style: const TextStyle(color: kTaxiYellow, fontWeight: FontWeight.bold, fontSize: 13),
                             items: List.generate(
                               state.drivers.length,
-                              (idx) => DropdownMenuItem(
-                                value: idx,
-                                child: Text("${state.drivers[idx].name} (${state.drivers[idx].tariffType})"),
-                              ),
+                              (idx) => DropdownMenuItem(value: idx, child: Text("${state.drivers[idx].name} (${state.drivers[idx].tariffType})")),
                             ),
                             onChanged: (val) {
                               if (val != null) {
@@ -1596,10 +1474,7 @@ class DriverTerminalScreen extends StatelessWidget {
             const SizedBox(height: 6),
             ...activeOrders.map((ord) => Card(
                   color: Colors.green.shade50,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    side: const BorderSide(color: kBekGreen, width: 1.5),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: const BorderSide(color: kBekGreen, width: 1.5)),
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
                     child: Column(
@@ -1627,11 +1502,7 @@ class DriverTerminalScreen extends StatelessWidget {
                               state.updateOrderStatus(ord.id, next, driver);
                             },
                             child: Text(
-                              ord.status == 'Qabul qilindi'
-                                  ? "MANZILGA YETIB KELDIM"
-                                  : ord.status == 'Yetib keldi'
-                                      ? "SAFARNI BOSHLASH"
-                                      : "SAFARNI YAKUNLASH",
+                              ord.status == 'Qabul qilindi' ? "MANZILGA YETIB KELDIM" : ord.status == 'Yetib keldi' ? "SAFARNI BOSHLASH" : "SAFARNI YAKUNLASH",
                               style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ),
@@ -1646,8 +1517,7 @@ class DriverTerminalScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text("Yangi buyurtmalar (${pendingOrders.length}):", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              if (pendingOrders.isNotEmpty)
-                const Text("Jonli efir", style: TextStyle(color: kBekGreen, fontSize: 12, fontWeight: FontWeight.bold)),
+              if (pendingOrders.isNotEmpty) const Text("Jonli efir", style: TextStyle(color: kBekGreen, fontSize: 12, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 8),
@@ -1698,11 +1568,7 @@ class DriverTerminalScreen extends StatelessWidget {
                                 width: double.infinity,
                                 height: 44,
                                 child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: kBekGreen,
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  ),
+                                  style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                                   onPressed: () => state.updateOrderStatus(ord.id, 'Qabul qilindi', driver),
                                   icon: const Icon(Icons.check_circle_outline, size: 18),
                                   label: const Text("BUYURTMANI QABUL QILISH", style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1721,7 +1587,6 @@ class DriverTerminalScreen extends StatelessWidget {
   }
 }
 
-// ==================== 3. OPERATOR MARKAZI ====================
 class OperatorView extends StatefulWidget {
   final AppState state;
   const OperatorView({super.key, required this.state});
@@ -1756,11 +1621,7 @@ class _OperatorViewState extends State<OperatorView> {
                     children: [
                       Expanded(
                         flex: 3,
-                        child: TextField(
-                          controller: _phoneCtrl,
-                          keyboardType: TextInputType.phone,
-                          decoration: const InputDecoration(labelText: "Mijoz telefoni", isDense: true, border: OutlineInputBorder()),
-                        ),
+                        child: TextField(controller: _phoneCtrl, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: "Mijoz telefoni", isDense: true, border: OutlineInputBorder())),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -1768,9 +1629,7 @@ class _OperatorViewState extends State<OperatorView> {
                         child: DropdownButtonFormField<String>(
                           value: _tariff,
                           decoration: const InputDecoration(labelText: "Tarif", isDense: true, border: OutlineInputBorder()),
-                          items: ["Standart", "Komfort", "Dostavka"]
-                              .map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 13))))
-                              .toList(),
+                          items: ["Standart", "Komfort", "Dostavka"].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 13)))).toList(),
                           onChanged: (v) => setState(() => _tariff = v!),
                         ),
                       ),
@@ -1779,19 +1638,9 @@ class _OperatorViewState extends State<OperatorView> {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _fromCtrl,
-                          decoration: const InputDecoration(labelText: "Qayerdan oladi", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
+                      Expanded(child: TextField(controller: _fromCtrl, decoration: const InputDecoration(labelText: "Qayerdan oladi", isDense: true, border: OutlineInputBorder()))),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _toCtrl,
-                          decoration: const InputDecoration(labelText: "Qayerga boradi", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
+                      Expanded(child: TextField(controller: _toCtrl, decoration: const InputDecoration(labelText: "Qayerga boradi", isDense: true, border: OutlineInputBorder()))),
                     ],
                   ),
                   const SizedBox(height: 10),
@@ -1802,9 +1651,7 @@ class _OperatorViewState extends State<OperatorView> {
                       style: ElevatedButton.styleFrom(backgroundColor: kTaxiYellow, foregroundColor: Colors.black),
                       onPressed: () {
                         if (_toCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Borish manzilini yozing!"), backgroundColor: Colors.red),
-                          );
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Borish manzilini yozing!"), backgroundColor: Colors.red));
                           return;
                         }
                         FocusManager.instance.primaryFocus?.unfocus();
@@ -1826,9 +1673,7 @@ class _OperatorViewState extends State<OperatorView> {
                           ),
                         );
                         _toCtrl.clear();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Buyurtma haydovchilarga yuborildi!"), backgroundColor: kBekGreen),
-                        );
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Buyurtma haydovchilarga yuborildi!"), backgroundColor: kBekGreen));
                       },
                       icon: const Icon(Icons.send),
                       label: const Text("HAYDOVCHILARGA YUBORISH", style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1855,10 +1700,7 @@ class _OperatorViewState extends State<OperatorView> {
                           subtitle: Text("Oladi: ${o.fromAddress}\nHolat: ${o.status} • Haydovchi: ${o.driverName ?? 'Biriktirilmagan'}"),
                           isThreeLine: true,
                           trailing: o.status == 'Kutilmoqda'
-                              ? IconButton(
-                                  icon: const Icon(Icons.cancel, color: Colors.red),
-                                  onPressed: () => widget.state.cancelOrder(o.id),
-                                )
+                              ? IconButton(icon: const Icon(Icons.cancel, color: Colors.red), onPressed: () => widget.state.cancelOrder(o.id))
                               : null,
                         ),
                       );
@@ -1871,7 +1713,6 @@ class _OperatorViewState extends State<OperatorView> {
   }
 }
 
-// ==================== 4. SUPER-ADMIN PANELI (DOIMIY XOTIRAGA SAQLAYDI) ====================
 class AdminView extends StatefulWidget {
   final AppState state;
   const AdminView({super.key, required this.state});
@@ -1922,9 +1763,7 @@ class _AdminViewState extends State<AdminView> {
                 DropdownButtonFormField<String>(
                   value: tariff,
                   decoration: const InputDecoration(labelText: "Tarif toifasi"),
-                  items: ["Standart", "Komfort", "Dostavka"]
-                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                      .toList(),
+                  items: ["Standart", "Komfort", "Dostavka"].map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                   onChanged: (v) => setDState(() => tariff = v!),
                 ),
                 TextField(controller: balCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Boshlang'ich balans")),
@@ -1973,49 +1812,21 @@ class _AdminViewState extends State<AdminView> {
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _stdBaseCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Standart (min)", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
+                      Expanded(child: TextField(controller: _stdBaseCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Standart (min)", isDense: true, border: OutlineInputBorder()))),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _stdKmCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Standart (1 km)", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
+                      Expanded(child: TextField(controller: _stdKmCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Standart (1 km)", isDense: true, border: OutlineInputBorder()))),
                     ],
                   ),
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _comfBaseCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Komfort (min)", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
+                      Expanded(child: TextField(controller: _comfBaseCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Komfort (min)", isDense: true, border: OutlineInputBorder()))),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _comfKmCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Komfort (1 km)", isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
+                      Expanded(child: TextField(controller: _comfKmCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Komfort (1 km)", isDense: true, border: OutlineInputBorder()))),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  TextField(
-                    controller: _commCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "Xizmat komissiyasi (%)", isDense: true, border: OutlineInputBorder()),
-                  ),
+                  TextField(controller: _commCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Xizmat komissiyasi (%)", isDense: true, border: OutlineInputBorder())),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
@@ -2033,12 +1844,10 @@ class _AdminViewState extends State<AdminView> {
                           dK: widget.state.delivPerKm,
                           comm: double.tryParse(_commCtrl.text) ?? 10.0,
                         );
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Tariflar doimiy xotiraga saqlandi!"), backgroundColor: kBekGreen),
-                        );
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Tariflar saqlandi!"), backgroundColor: kBekGreen));
                       },
                       icon: const Icon(Icons.save),
-                      label: const Text("DOIMIY XOTIRAGA SAQLASH", style: TextStyle(fontWeight: FontWeight.bold)),
+                      label: const Text("SAQLASH", style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -2072,10 +1881,7 @@ class _AdminViewState extends State<AdminView> {
                         label: const Text("+50m", style: TextStyle(color: kBekGreen, fontWeight: FontWeight.bold)),
                       ),
                       if (widget.state.drivers.length > 1)
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                          onPressed: () => widget.state.deleteDriver(d.id),
-                        ),
+                        IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20), onPressed: () => widget.state.deleteDriver(d.id)),
                     ],
                   ),
                 ),
