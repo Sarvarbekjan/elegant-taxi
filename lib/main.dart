@@ -85,8 +85,8 @@ class OrderModel {
         clientPhone: j['clientPhone'] ?? '',
         fromAddress: j['fromAddress'] ?? '',
         toAddress: j['toAddress'] ?? '',
-        fromPoint: Point(latitude: (j['fromLat'] ?? 55.75).toDouble(), longitude: (j['fromLon'] ?? 37.61).toDouble()),
-        toPoint: Point(latitude: (j['toLat'] ?? 55.76).toDouble(), longitude: (j['toLon'] ?? 37.62).toDouble()),
+        fromPoint: Point(latitude: (j['fromLat'] ?? 37.82).toDouble(), longitude: (j['fromLon'] ?? 67.59).toDouble()),
+        toPoint: Point(latitude: (j['toLat'] ?? 37.83).toDouble(), longitude: (j['toLon'] ?? 67.60).toDouble()),
         tariff: j['tariff'] ?? 'Standart',
         distanceKm: (j['distanceKm'] ?? 1.0).toDouble(),
         price: j['price'] ?? 4000,
@@ -165,8 +165,12 @@ class AppState extends ChangeNotifier {
   int clientBonus = 10000;
   bool useBonus = false;
   int activeDriverIndex = 0;
+  String currentLanguage = "O'zbek";
+  bool isDarkMode = false;
 
   List<OrderModel> orders = [];
+  List<String> favoriteAddresses = ["Markaziy bozor", "Shurchi vokzali", "Universitet"];
+  
   List<DriverModel> drivers = [
     DriverModel(
       id: "D1",
@@ -177,7 +181,7 @@ class AppState extends ChangeNotifier {
       tariffType: "Standart",
       trips: 144,
       balance: 584200,
-      location: const Point(latitude: 55.7520, longitude: 37.6175),
+      location: const Point(latitude: 37.8267, longitude: 67.5975),
     ),
     DriverModel(
       id: "D2",
@@ -188,7 +192,7 @@ class AppState extends ChangeNotifier {
       tariffType: "Komfort",
       trips: 98,
       balance: 120000,
-      location: const Point(latitude: 55.7490, longitude: 37.6220),
+      location: const Point(latitude: 37.8300, longitude: 67.6000),
     ),
   ];
 
@@ -206,7 +210,12 @@ class AppState extends ChangeNotifier {
         commissionPercent = (data['commissionPercent'] ?? 10.0).toDouble();
         clientBonus = data['clientBonus'] ?? 10000;
         activeDriverIndex = data['activeDriverIndex'] ?? 0;
+        currentLanguage = data['currentLanguage'] ?? "O'zbek";
+        isDarkMode = data['isDarkMode'] ?? false;
 
+        if (data['favoriteAddresses'] != null) {
+          favoriteAddresses = List<String>.from(data['favoriteAddresses']);
+        }
         if (data['drivers'] != null) {
           drivers = (data['drivers'] as List).map((e) => DriverModel.fromJson(e)).toList();
         }
@@ -230,6 +239,9 @@ class AppState extends ChangeNotifier {
         'commissionPercent': commissionPercent,
         'clientBonus': clientBonus,
         'activeDriverIndex': activeDriverIndex,
+        'currentLanguage': currentLanguage,
+        'isDarkMode': isDarkMode,
+        'favoriteAddresses': favoriteAddresses,
         'drivers': drivers.map((d) => d.toJson()).toList(),
         'orders': orders.map((o) => o.toJson()).toList(),
       };
@@ -314,7 +326,7 @@ class AppState extends ChangeNotifier {
       tariffType: tariff,
       trips: 0,
       balance: bal,
-      location: const Point(latitude: 55.75, longitude: 37.61),
+      location: const Point(latitude: 37.82, longitude: 67.59),
     ));
     saveToStorage();
     notifyListeners();
@@ -345,16 +357,21 @@ class ElegantTaxiApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Elegant Taxi',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primaryColor: kBekGreen,
-        scaffoldBackgroundColor: const Color(0xFFF5F6F8),
-        fontFamily: 'Roboto',
-        useMaterial3: true,
-      ),
-      home: const RoleContainerScreen(),
+    return AnimatedBuilder(
+      animation: appState,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'Bek Taxi',
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            primaryColor: kBekGreen,
+            scaffoldBackgroundColor: appState.isDarkMode ? const Color(0xFF121212) : const Color(0xFFF5F6F8),
+            fontFamily: 'Roboto',
+            useMaterial3: true,
+          ),
+          home: const RoleContainerScreen(),
+        );
+      },
     );
   }
 }
@@ -461,129 +478,302 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: appState,
-      builder: (context, _) {
-        final int pendingCount = appState.orders.where((o) => o.status == 'Kutilmoqda').length;
+    final int pendingCount = appState.orders.where((o) => o.status == 'Kutilmoqda').length;
 
-        return GestureDetector(
-          onTap: _hideKeyboard,
-          child: Scaffold(
-            key: _scaffoldKey,
-            resizeToAvoidBottomInset: true,
-            appBar: _selectedRole == 0
-                ? null
-                : AppBar(
-                    backgroundColor: kDarkBg,
-                    iconTheme: const IconThemeData(color: kTaxiYellow),
-                    title: Text(
-                      _selectedRole == 1
-                          ? "HAYDOVCHI TERMINALI"
-                          : _selectedRole == 2
-                              ? "OPERATOR MARKAZI"
-                              : "SUPER-ADMIN PANELI",
-                      style: const TextStyle(color: kTaxiYellow, fontSize: 15, fontWeight: FontWeight.bold),
-                    ),
-                    actions: [
-                      TextButton.icon(
-                        onPressed: () => _switchRoleDirect(0),
-                        icon: const Icon(Icons.map, color: Colors.white, size: 18),
-                        label: const Text("Xarita", style: TextStyle(color: Colors.white)),
+    return GestureDetector(
+      onTap: _hideKeyboard,
+      child: Scaffold(
+        key: _scaffoldKey,
+        resizeToAvoidBottomInset: true,
+        appBar: _selectedRole == 0
+            ? null
+            : AppBar(
+                backgroundColor: kDarkBg,
+                iconTheme: const IconThemeData(color: kTaxiYellow),
+                title: Text(
+                  _selectedRole == 1
+                      ? "HAYDOVCHI TERMINALI"
+                      : _selectedRole == 2
+                          ? "DISPACHER MARKAZI"
+                          : "SUPER-ADMIN",
+                  style: const TextStyle(color: kTaxiYellow, fontSize: 15, fontWeight: FontWeight.bold),
+                ),
+                actions: [
+                  TextButton.icon(
+                    onPressed: () => _switchRoleDirect(0),
+                    icon: const Icon(Icons.map, color: Colors.white, size: 18),
+                    label: const Text("Xarita", style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+        drawer: Drawer(
+          child: SafeArea(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  color: kBekGreen.withOpacity(0.08),
+                  child: Row(
+                    children: [
+                      const CircleAvatar(
+                        radius: 26,
+                        backgroundColor: kBekGreen,
+                        child: Icon(Icons.person, color: Colors.white, size: 28),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("Kamola", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                            Text(
+                              "Bonus balans: ${appState.clientBonus} so'm",
+                              style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-            drawer: Drawer(
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      color: kBekGreen.withOpacity(0.08),
-                      child: Row(
-                        children: [
-                          const CircleAvatar(
-                            radius: 26,
-                            backgroundColor: kBekGreen,
-                            child: Icon(Icons.person, color: Colors.white, size: 28),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text("Sarvarbek", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                                Text(
-                                  "Bonus balans: ${appState.clientBonus} so'm",
-                                  style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.w600, fontSize: 13),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.map, color: kBekGreen),
-                      title: const Text("Mijoz (Taksi chaqirish)"),
-                      selected: _selectedRole == 0,
-                      onTap: () => _selectRoleFromDrawer(0),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.local_taxi, color: Colors.green),
-                      title: const Text("Haydovchi terminali"),
-                      trailing: pendingCount > 0
-                          ? CircleAvatar(
-                              radius: 12,
-                              backgroundColor: Colors.red,
-                              child: Text(
-                                "$pendingCount",
-                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                              ),
-                            )
-                          : null,
-                      selected: _selectedRole == 1,
-                      onTap: () => _selectRoleFromDrawer(1),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.headset_mic, color: Colors.orange),
-                      title: const Text("Dispetcher (Operator)"),
-                      selected: _selectedRole == 2,
-                      onTap: () => _selectRoleFromDrawer(2),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.admin_panel_settings, color: Colors.redAccent),
-                      title: const Text("Super-Admin"),
-                      trailing: Icon(
-                        appState.isAdminUnlocked ? Icons.lock_open : Icons.lock,
-                        size: 18,
-                        color: Colors.grey,
-                      ),
-                      selected: _selectedRole == 3,
-                      onTap: () => _selectRoleFromDrawer(3),
-                    ),
-                  ],
                 ),
-              ),
-            ),
-            body: IndexedStack(
-              index: _selectedRole,
-              children: [
-                ClientMapScreen(
-                  onOpenMenu: () {
-                    _hideKeyboard();
-                    _scaffoldKey.currentState?.openDrawer();
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.map, color: kBekGreen),
+                  title: const Text("Mijoz (Taksi chaqirish)"),
+                  selected: _selectedRole == 0,
+                  onTap: () => _selectRoleFromDrawer(0),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.local_taxi, color: Colors.green),
+                  title: const Text("Haydovchi terminali"),
+                  trailing: pendingCount > 0
+                      ? CircleAvatar(
+                          radius: 12,
+                          backgroundColor: Colors.red,
+                          child: Text("$pendingCount", style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                        )
+                      : null,
+                  selected: _selectedRole == 1,
+                  onTap: () => _selectRoleFromDrawer(1),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.headset_mic, color: Colors.orange),
+                  title: const Text("Dispetcher (Operator)"),
+                  selected: _selectedRole == 2,
+                  onTap: () => _selectRoleFromDrawer(2),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.admin_panel_settings, color: Colors.redAccent),
+                  title: const Text("Super-Admin"),
+                  trailing: Icon(appState.isAdminUnlocked ? Icons.lock_open : Icons.lock, size: 18, color: Colors.grey),
+                  selected: _selectedRole == 3,
+                  onTap: () => _selectRoleFromDrawer(3),
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.history, color: Colors.blueGrey),
+                  title: const Text("Buyurtmalar tarixi"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showHistoryDialog(context);
                   },
-                  onQuickRoleSwitch: _switchRoleDirect,
                 ),
-                DriverTerminalScreen(state: appState),
-                OperatorView(state: appState),
-                AdminView(state: appState),
+                ListTile(
+                  leading: const Icon(Icons.favorite_border, color: Colors.redAccent),
+                  title: const Text("Sevimli manzillar"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showFavoritesDialog(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.info_outline, color: Colors.teal),
+                  title: const Text("Kompaniya haqida"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showAboutDialog(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.local_offer_outlined, color: Colors.purple),
+                  title: const Text("Yangiliklar va aksiyalar"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showNewsDialog(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.support_agent, color: Colors.indigo),
+                  title: const Text("Qayta aloqa"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showSupportDialog(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.settings, color: Colors.blueGrey),
+                  title: const Text("Sozlamalar"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showSettingsModal(context);
+                  },
+                ),
               ],
             ),
           ),
-        );
-      },
+        ),
+        body: IndexedStack(
+          index: _selectedRole,
+          children: [
+            ClientMapScreen(
+              onOpenMenu: () {
+                _hideKeyboard();
+                _scaffoldKey.currentState?.openDrawer();
+              },
+              onQuickRoleSwitch: _switchRoleDirect,
+            ),
+            DriverTerminalScreen(state: appState),
+            OperatorView(state: appState),
+            AdminView(state: appState),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showHistoryDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Buyurtmalar tarixi"),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: appState.orders.isEmpty
+              ? const Text("Hozircha buyurtmalar yo'q.")
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: appState.orders.length,
+                  itemBuilder: (_, i) {
+                    final o = appState.orders[i];
+                    return ListTile(
+                      title: Text("${o.toAddress} (${o.price} so'm)"),
+                      subtitle: Text("Holati: ${o.status}"),
+                    );
+                  },
+                ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Yopish"))],
+      ),
+    );
+  }
+
+  void _showFavoritesDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Sevimli manzillar"),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: appState.favoriteAddresses.length,
+            itemBuilder: (_, i) => ListTile(
+              leading: const Icon(Icons.star, color: kTaxiYellow),
+              title: Text(appState.favoriteAddresses[i]),
+            ),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Yopish"))],
+      ),
+    );
+  }
+
+  void _showAboutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Bek Taxi haqida"),
+        content: const Text("Bek Taxi — zamonaviy, tezkor va qulay taksi xizmati ilovasi.\nVersiya: 2.5.0 Pro"),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Tushunarli"))],
+      ),
+    );
+  }
+
+  void _showNewsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Yangiliklar va aksiyalar"),
+        content: const Text("🎉 Hozirda barcha yo'nalishlarga 10% chegirma e'lon qilindi! Do'stlaringizni taklif qiling va bonuslarga ega bo'ling."),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Ajoyib"))],
+      ),
+    );
+  }
+
+  void _showSupportDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Qayta aloqa (Operator)"),
+        content: const Text("Murojaat uchun dispetcherlik markazi:\n📞 Tel: +998 90 267 25 80\n💬 Telegram bot: @bektaxi_bot"),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))],
+      ),
+    );
+  }
+
+  void _showSettingsModal(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Ilova Sozlamalari", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("Tungi rejim (Dark Theme)", style: TextStyle(fontSize: 15)),
+                  Switch(
+                    activeColor: kBekGreen,
+                    value: appState.isDarkMode,
+                    onChanged: (val) {
+                      setModalState(() => appState.isDarkMode = val);
+                      appState.saveToStorage();
+                      appState.notifyListeners();
+                    },
+                  ),
+                ],
+              ),
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("Ilova tili", style: TextStyle(fontSize: 15)),
+                  DropdownButton<String>(
+                    value: appState.currentLanguage,
+                    items: ["O'zbek", "Русский", "English"]
+                        .map((l) => DropdownMenuItem(value: l, child: Text(l)))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) {
+                        setModalState(() => appState.currentLanguage = v);
+                        appState.saveToStorage();
+                        appState.notifyListeners();
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -606,7 +796,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   YandexMapController? _mapController;
   final List<MapObject> _mapObjects = [];
 
-  Point _fromPoint = const Point(latitude: 55.7165, longitude: 37.7885);
+  Point _fromPoint = const Point(latitude: 37.8267, longitude: 67.5975);
   Point? _destinationLocation;
 
   String _fromAddress = "Joylashuv aniqlanmoqda...";
@@ -674,7 +864,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        setState(() => _fromAddress = "GPS o'chirilgan (Qo'lda tanlang)");
+        setState(() => _fromAddress = "Shurchi tumani (Markaz)");
         return;
       }
       LocationPermission permission = await Geolocator.checkPermission();
@@ -707,7 +897,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
         await _buildRoute();
       }
     } catch (_) {
-      if (mounted) setState(() => _fromAddress = "Joriy joylashuv");
+      if (mounted) setState(() => _fromAddress = "Shurchi, Alisher Navoiy ko'chasi");
     }
   }
 
@@ -816,7 +1006,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
         ),
       );
 
-      // JONLI TAKSILAR XARITADA
       for (int i = 0; i < appState.drivers.length; i++) {
         final d = appState.drivers[i];
         final pt = d.location ?? Point(latitude: _fromPoint.latitude + 0.002 * (i + 1), longitude: _fromPoint.longitude + 0.002 * (i + 1));
@@ -857,6 +1046,21 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       raw = max(2000, raw - min(raw - 2000, appState.clientBonus));
     }
     return raw;
+  }
+
+  // A va B nuqtani o'zaro almashtirish (Swap)
+  void _swapAddresses() {
+    if (_destinationLocation == null) return;
+    setState(() {
+      final tempPt = _fromPoint;
+      final tempAddr = _fromAddress;
+      _fromPoint = _destinationLocation!;
+      _fromAddress = _toAddress;
+      _destinationLocation = tempPt;
+      _toAddress = tempAddr;
+    });
+    _updateMapObjects();
+    _buildRoute();
   }
 
   void _openLiveAddressSearchSheet({required bool isFrom}) {
@@ -956,7 +1160,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                             setState(() => _mapTapTarget = isFrom ? 'from' : 'to');
                             ScaffoldMessenger.of(this.context).showSnackBar(
                               SnackBar(
-                                content: Text(isFrom ? "Xaritadan A (Qayerdan) nuqtani bosing!" : "Xaritadan B (Boradigan) nuqtani bosing!"),
+                                content: Text(isFrom ? "Xaritadan A nuqtani bosing!" : "Xaritadan B nuqtani bosing!"),
                                 backgroundColor: isFrom ? kBekGreen : Colors.redAccent,
                               ),
                             );
@@ -1268,98 +1472,112 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   }
 
   Widget _buildBookingUI() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
       children: [
-        InkWell(
-          onTap: () => _openLiveAddressSearchSheet(isFrom: true),
-          borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6.0),
-            child: Row(
-              children: [
-                const Icon(Icons.my_location, color: kBekGreen, size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text("Qayerdan olamiz? (Boshqa joyni tanlash)", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      Text(_fromAddress, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.edit_location_alt_outlined, color: kBekGreen, size: 20),
-              ],
-            ),
-          ),
-        ),
-        const Divider(height: 12),
-        InkWell(
-          onTap: () => _openLiveAddressSearchSheet(isFrom: false),
-          borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6.0),
-            child: Row(
-              children: [
-                const Icon(Icons.location_on, color: Colors.red, size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text("Qayerga borasiz?", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      Text(
-                        _isSearchingAddress ? "Manzil aniqlanmoqda..." : (_toAddress.isEmpty ? "Manzilni qidirish yoki xaritadan bosish" : _toAddress),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: _toAddress.isEmpty ? Colors.grey.shade600 : Colors.black, fontWeight: FontWeight.bold, fontSize: 14),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              onTap: () => _openLiveAddressSearchSheet(isFrom: true),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6.0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.my_location, color: kBekGreen, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("Qayerdan olamiz?", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          Text(_fromAddress, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const Icon(Icons.edit_location_alt_outlined, color: kBekGreen, size: 20),
+                  ],
                 ),
-                if (_destinationLocation != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
-                    child: Text("$_distanceKm km • ~$_etaMinutes daq", style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 12)),
-                  )
-                else
-                  const Icon(Icons.search, color: Colors.grey, size: 20),
-              ],
+              ),
             ),
-          ),
+            const Divider(height: 12),
+            InkWell(
+              onTap: () => _openLiveAddressSearchSheet(isFrom: false),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6.0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.location_on, color: Colors.red, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("Qayerga borasiz?", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          Text(
+                            _isSearchingAddress ? "Manzil aniqlanmoqda..." : (_toAddress.isEmpty ? "Manzilni qidirish yoki xaritadan bosish" : _toAddress),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: _toAddress.isEmpty ? Colors.grey.shade600 : Colors.black, fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_destinationLocation != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
+                        child: Text("$_distanceKm km • ~$_etaMinutes daq", style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 12)),
+                      )
+                    else
+                      const Icon(Icons.search, color: Colors.grey, size: 20),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _tariffCard("Standart", Icons.local_taxi),
+                  const SizedBox(width: 10),
+                  _tariffCard("Komfort", Icons.directions_car),
+                  const SizedBox(width: 10),
+                  _tariffCard("Dostavka", Icons.local_shipping),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kBekGreen,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+                  elevation: 2,
+                ),
+                onPressed: _submitOrder,
+                child: Text(
+                  _destinationLocation == null ? "Buyurtma berish" : "Buyurtma berish • ${_getPrice(_selectedTariff)} so'm",
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 12),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              _tariffCard("Standart", Icons.local_taxi),
-              const SizedBox(width: 10),
-              _tariffCard("Komfort", Icons.directions_car),
-              const SizedBox(width: 10),
-              _tariffCard("Dostavka", Icons.local_shipping),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          height: 52,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: kBekGreen,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
-              elevation: 2,
-            ),
-            onPressed: _submitOrder,
-            child: Text(
-              _destinationLocation == null ? "Buyurtma berish" : "Buyurtma berish • ${_getPrice(_selectedTariff)} so'm",
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
+        Positioned(
+          right: 8,
+          top: 25,
+          child: FloatingActionButton.small(
+            backgroundColor: Colors.white,
+            elevation: 2,
+            onPressed: _destinationLocation != null ? _swapAddresses : null,
+            child: Icon(Icons.swap_vert, color: _destinationLocation != null ? kBekGreen : Colors.grey),
           ),
         ),
       ],
@@ -1664,8 +1882,8 @@ class _OperatorViewState extends State<OperatorView> {
                             clientPhone: _phoneCtrl.text.trim(),
                             fromAddress: _fromCtrl.text.trim(),
                             toAddress: _toCtrl.text.trim(),
-                            fromPoint: const Point(latitude: 55.7512, longitude: 37.6184),
-                            toPoint: const Point(latitude: 55.7612, longitude: 37.6284),
+                            fromPoint: const Point(latitude: 37.82, longitude: 67.59),
+                            toPoint: const Point(latitude: 37.83, longitude: 67.60),
                             tariff: _tariff,
                             distanceKm: km,
                             price: price,
