@@ -63,4 +63,5 @@ flutter {
 
 dependencies {
     implementation 'androidx.annotation:annotation:1.7.0'
+    implementation 'com.yandex.android:maps.mobile:4.4.0-full'
 }
