@@ -23,7 +23,7 @@ if (flutterVersionName == null) {
 }
 
 android {
-    namespace "com.elegant.taxi"
+    namespace "com.example.elegant_taxi"
     compileSdk 34
     ndkVersion flutter.ndkVersion
 
@@ -41,7 +41,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.elegant.taxi"
+        applicationId "com.example.elegant_taxi"
         minSdkVersion 24
         targetSdk 34
         versionCode flutterVersionCode.toInteger()
