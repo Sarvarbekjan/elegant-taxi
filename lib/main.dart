@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' as ui;
 import 'dart:typed_data';
@@ -6,8 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:yandex_mapkit/yandex_mapkit.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await appState.loadFromStorage();
   runApp(const ElegantTaxiApp());
 }
 
@@ -16,6 +19,18 @@ const Color kTaxiYellow = Color(0xFFFFCC00);
 const Color kDarkBg = Color(0xFF14171F);
 
 // ==================== MODELLAR ====================
+class AddressSuggestion {
+  final String title;
+  final String subtitle;
+  final Point point;
+
+  AddressSuggestion({
+    required this.title,
+    required this.subtitle,
+    required this.point,
+  });
+}
+
 class OrderModel {
   final String id;
   final String clientPhone;
@@ -26,7 +41,7 @@ class OrderModel {
   final String tariff;
   final double distanceKm;
   final int price;
-  String status; // Kutilmoqda, Qabul qilindi, Yetib keldi, Safarda, Yakunlandi, Bekor qilindi
+  String status;
   String? driverId;
   String? driverName;
   String? driverCar;
@@ -50,6 +65,44 @@ class OrderModel {
     this.driverPhone,
     required this.createdAt,
   });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'clientPhone': clientPhone,
+        'fromAddress': fromAddress,
+        'toAddress': toAddress,
+        'fromLat': fromPoint.latitude,
+        'fromLon': fromPoint.longitude,
+        'toLat': toPoint.latitude,
+        'toLon': toPoint.longitude,
+        'tariff': tariff,
+        'distanceKm': distanceKm,
+        'price': price,
+        'status': status,
+        'driverId': driverId,
+        'driverName': driverName,
+        'driverCar': driverCar,
+        'driverPhone': driverPhone,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory OrderModel.fromJson(Map<String, dynamic> j) => OrderModel(
+        id: j['id'] ?? 'ORD-100',
+        clientPhone: j['clientPhone'] ?? '',
+        fromAddress: j['fromAddress'] ?? '',
+        toAddress: j['toAddress'] ?? '',
+        fromPoint: Point(latitude: (j['fromLat'] ?? 55.75).toDouble(), longitude: (j['fromLon'] ?? 37.61).toDouble()),
+        toPoint: Point(latitude: (j['toLat'] ?? 55.76).toDouble(), longitude: (j['toLon'] ?? 37.62).toDouble()),
+        tariff: j['tariff'] ?? 'Standart',
+        distanceKm: (j['distanceKm'] ?? 1.0).toDouble(),
+        price: j['price'] ?? 4000,
+        status: j['status'] ?? 'Kutilmoqda',
+        driverId: j['driverId'],
+        driverName: j['driverName'],
+        driverCar: j['driverCar'],
+        driverPhone: j['driverPhone'],
+        createdAt: DateTime.tryParse(j['createdAt'] ?? '') ?? DateTime.now(),
+      );
 }
 
 class DriverModel {
@@ -70,15 +123,39 @@ class DriverModel {
     required this.carModel,
     required this.carNumber,
     this.tariffType = 'Standart',
-    this.trips = 144,
-    this.balance = 584200,
+    this.trips = 0,
+    this.balance = 100000,
     this.isOnline = true,
   });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'phone': phone,
+        'carModel': carModel,
+        'carNumber': carNumber,
+        'tariffType': tariffType,
+        'trips': trips,
+        'balance': balance,
+        'isOnline': isOnline,
+      };
+
+  factory DriverModel.fromJson(Map<String, dynamic> j) => DriverModel(
+        id: j['id'] ?? 'D1',
+        name: j['name'] ?? '',
+        phone: j['phone'] ?? '',
+        carModel: j['carModel'] ?? '',
+        carNumber: j['carNumber'] ?? '',
+        tariffType: j['tariffType'] ?? 'Standart',
+        trips: j['trips'] ?? 0,
+        balance: j['balance'] ?? 0,
+        isOnline: j['isOnline'] ?? true,
+      );
 }
 
-// ==================== GLOBAL TIZIM (STATE VA OVOZ) ====================
+// ==================== GLOBAL TIZIM (DOIMIY XOTIRA VA OVOZ BILAN) ====================
 class AppState extends ChangeNotifier {
-  static const MethodChannel _soundChannel = MethodChannel('com.example.elegant_taxi/sound');
+  static const MethodChannel _nativeChannel = MethodChannel('com.example.elegant_taxi/native');
 
   int stdBase = 4000;
   int stdPerKm = 2000;
@@ -118,10 +195,57 @@ class AppState extends ChangeNotifier {
     ),
   ];
 
+  // TELEFON XOTIRASIDAN O'QISH
+  Future<void> loadFromStorage() async {
+    try {
+      final String? raw = await _nativeChannel.invokeMethod<String>('loadData');
+      if (raw != null && raw.isNotEmpty) {
+        final Map<String, dynamic> data = jsonDecode(raw);
+        stdBase = data['stdBase'] ?? 4000;
+        stdPerKm = data['stdPerKm'] ?? 2000;
+        comfBase = data['comfBase'] ?? 5000;
+        comfPerKm = data['comfPerKm'] ?? 3000;
+        delivBase = data['delivBase'] ?? 6000;
+        delivPerKm = data['delivPerKm'] ?? 2500;
+        commissionPercent = (data['commissionPercent'] ?? 10.0).toDouble();
+        clientBonus = data['clientBonus'] ?? 10000;
+        activeDriverIndex = data['activeDriverIndex'] ?? 0;
+
+        if (data['drivers'] != null) {
+          drivers = (data['drivers'] as List).map((e) => DriverModel.fromJson(e)).toList();
+        }
+        if (data['orders'] != null) {
+          orders = (data['orders'] as List).map((e) => OrderModel.fromJson(e)).toList();
+        }
+        if (activeDriverIndex >= drivers.length) activeDriverIndex = 0;
+      }
+    } catch (_) {}
+  }
+
+  // TELEFON XOTIRASIGA SAQLASH
+  Future<void> saveToStorage() async {
+    try {
+      final Map<String, dynamic> data = {
+        'stdBase': stdBase,
+        'stdPerKm': stdPerKm,
+        'comfBase': comfBase,
+        'comfPerKm': comfPerKm,
+        'delivBase': delivBase,
+        'delivPerKm': delivPerKm,
+        'commissionPercent': commissionPercent,
+        'clientBonus': clientBonus,
+        'activeDriverIndex': activeDriverIndex,
+        'drivers': drivers.map((d) => d.toJson()).toList(),
+        'orders': orders.map((o) => o.toJson()).toList(),
+      };
+      await _nativeChannel.invokeMethod('saveData', {'data': jsonEncode(data)});
+    } catch (_) {}
+  }
+
   Future<void> playNotificationSound() async {
     try {
       HapticFeedback.heavyImpact();
-      await _soundChannel.invokeMethod('playSound');
+      await _nativeChannel.invokeMethod('playSound');
     } catch (_) {
       SystemSound.play(SystemSoundType.alert);
     }
@@ -129,6 +253,7 @@ class AppState extends ChangeNotifier {
 
   void createOrder(OrderModel order) {
     orders.insert(0, order);
+    saveToStorage();
     playNotificationSound();
     notifyListeners();
   }
@@ -147,6 +272,7 @@ class AppState extends ChangeNotifier {
         driver.trips += 1;
         clientBonus += ((orders[idx].price * 0.03) / 100).round() * 100;
       }
+      saveToStorage();
       playNotificationSound();
       notifyListeners();
     }
@@ -156,6 +282,7 @@ class AppState extends ChangeNotifier {
     final idx = orders.indexWhere((o) => o.id == orderId);
     if (idx != -1) {
       orders[idx].status = 'Bekor qilindi';
+      saveToStorage();
       playNotificationSound();
       notifyListeners();
     }
@@ -177,13 +304,14 @@ class AppState extends ChangeNotifier {
     delivBase = dB;
     delivPerKm = dK;
     commissionPercent = comm;
+    saveToStorage();
     playNotificationSound();
     notifyListeners();
   }
 
   void addDriver(String name, String phone, String car, String num, String tariff, int bal) {
     drivers.add(DriverModel(
-      id: "D${drivers.length + 1}",
+      id: "D${DateTime.now().millisecondsSinceEpoch}",
       name: name,
       phone: phone,
       carModel: car,
@@ -192,6 +320,15 @@ class AppState extends ChangeNotifier {
       trips: 0,
       balance: bal,
     ));
+    saveToStorage();
+    notifyListeners();
+  }
+
+  void deleteDriver(String driverId) {
+    if (drivers.length <= 1) return;
+    drivers.removeWhere((d) => d.id == driverId);
+    if (activeDriverIndex >= drivers.length) activeDriverIndex = 0;
+    saveToStorage();
     notifyListeners();
   }
 
@@ -199,6 +336,7 @@ class AppState extends ChangeNotifier {
     final idx = drivers.indexWhere((d) => d.id == driverId);
     if (idx != -1) {
       drivers[idx].balance += amount;
+      saveToStorage();
       notifyListeners();
     }
   }
@@ -328,7 +466,6 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // AnimatedBuilder barcha 4 ta oynani real-time yangilab turishni kafolatlaydi!
     return AnimatedBuilder(
       animation: appState,
       builder: (context, _) {
@@ -456,7 +593,7 @@ class _RoleContainerScreenState extends State<RoleContainerScreen> {
   }
 }
 
-// ==================== 1. MIJOZ XARITASI (YANDEX MAPKIT + GEOCODER) ====================
+// ==================== 1. MIJOZ XARITASI (JONLI QIDIRUV + ISTALGAN A va B NUQTA) ====================
 class ClientMapScreen extends StatefulWidget {
   final VoidCallback onOpenMenu;
   final ValueChanged<int> onQuickRoleSwitch;
@@ -475,8 +612,10 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   YandexMapController? _mapController;
   final List<MapObject> _mapObjects = [];
 
-  Point _currentLocation = const Point(latitude: 55.751244, longitude: 37.618423);
+  Point _gpsLocation = const Point(latitude: 55.7165, longitude: 37.7885);
+  Point _fromPoint = const Point(latitude: 55.7165, longitude: 37.7885);
   Point? _destinationLocation;
+
   String _fromAddress = "Joylashuv aniqlanmoqda...";
   String _toAddress = "";
   double _distanceKm = 0.0;
@@ -484,6 +623,8 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   String _selectedTariff = 'Standart';
   String? _activeOrderId;
   bool _isSearchingAddress = false;
+  // Xaritadan bosganda qaysi nuqtani o'zgartirish: 'to' (B nuqta) yoki 'from' (A nuqta)
+  String _mapTapTarget = 'to';
 
   OrderModel? get _activeOrder {
     if (_activeOrderId == null) return null;
@@ -494,7 +635,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     }
   }
 
-  // Koordinatani haqiqiy ko'cha nomiga aylantirish (Yandex Geocoder)
   Future<String> _reverseGeocode(Point point) async {
     try {
       final sessionWithRes = YandexSearch.searchByPoint(
@@ -511,7 +651,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
         if (name.isNotEmpty) return name;
       }
     } catch (_) {}
-    return "Belgilangan nuqta (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})";
+    return "Nuqta (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})";
   }
 
   Future<Uint8List> _createMarkerImage(Color color, String label) async {
@@ -542,7 +682,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        setState(() => _fromAddress = "GPS o'chirilgan (Joriy nuqta)");
+        setState(() => _fromAddress = "GPS o'chirilgan (Qo'lda tanlang)");
         return;
       }
       LocationPermission permission = await Geolocator.checkPermission();
@@ -554,11 +694,15 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       if (!mounted) return;
 
       final pt = Point(latitude: pos.latitude, longitude: pos.longitude);
-      setState(() => _currentLocation = pt);
+      setState(() {
+        _gpsLocation = pt;
+        _fromPoint = pt;
+        _mapTapTarget = 'to';
+      });
 
       if (_mapController != null) {
         await _mapController!.moveCamera(
-          CameraUpdate.newCameraPosition(CameraPosition(target: _currentLocation, zoom: 16.0)),
+          CameraUpdate.newCameraPosition(CameraPosition(target: _fromPoint, zoom: 16.0)),
           animation: immediateJump ? null : const MapAnimation(type: MapAnimationType.smooth, duration: 1.0),
         );
       }
@@ -567,6 +711,9 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       final addr = await _reverseGeocode(pt);
       if (mounted) {
         setState(() => _fromAddress = addr);
+      }
+      if (_destinationLocation != null) {
+        await _buildRoute();
       }
     } catch (_) {
       if (mounted) setState(() => _fromAddress = "Joriy joylashuv");
@@ -589,7 +736,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     try {
       var resultWithSession = YandexDriving.requestRoutes(
         points: [
-          RequestPoint(point: _currentLocation, requestPointType: RequestPointType.wayPoint),
+          RequestPoint(point: _fromPoint, requestPointType: RequestPointType.wayPoint),
           RequestPoint(point: _destinationLocation!, requestPointType: RequestPointType.wayPoint),
         ],
         drivingOptions: const DrivingOptions(initialAzimuth: 0, routesCount: 1, avoidTolls: true),
@@ -629,12 +776,12 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           Geometry.fromBoundingBox(
             BoundingBox(
               southWest: Point(
-                latitude: min(_currentLocation.latitude, _destinationLocation!.latitude) - 0.004,
-                longitude: min(_currentLocation.longitude, _destinationLocation!.longitude) - 0.004,
+                latitude: min(_fromPoint.latitude, _destinationLocation!.latitude) - 0.004,
+                longitude: min(_fromPoint.longitude, _destinationLocation!.longitude) - 0.004,
               ),
               northEast: Point(
-                latitude: max(_currentLocation.latitude, _destinationLocation!.latitude) + 0.004,
-                longitude: max(_currentLocation.longitude, _destinationLocation!.longitude) + 0.004,
+                latitude: max(_fromPoint.latitude, _destinationLocation!.latitude) + 0.004,
+                longitude: max(_fromPoint.longitude, _destinationLocation!.longitude) + 0.004,
               ),
             ),
           ),
@@ -646,7 +793,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
 
   void _drawFallbackRoute() {
     if (_destinationLocation == null) return;
-    final dist = _calculateStraightDistance(_currentLocation, _destinationLocation!);
+    final dist = _calculateStraightDistance(_fromPoint, _destinationLocation!);
     setState(() {
       _distanceKm = dist;
       _etaMinutes = max(2, (dist * 2.5).round());
@@ -654,7 +801,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       _mapObjects.add(
         PolylineMapObject(
           mapId: const MapObjectId('route'),
-          polyline: Polyline(points: [_currentLocation, _destinationLocation!]),
+          polyline: Polyline(points: [_fromPoint, _destinationLocation!]),
           strokeColor: kBekGreen,
           strokeWidth: 5,
         ),
@@ -673,21 +820,21 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       _mapObjects.add(
         PlacemarkMapObject(
           mapId: const MapObjectId('start'),
-          point: _currentLocation,
+          point: _fromPoint,
           icon: PlacemarkIcon.single(PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(startIcon), scale: 1.0)),
         ),
       );
       _mapObjects.add(
         PlacemarkMapObject(
           mapId: const MapObjectId('taxi_1'),
-          point: Point(latitude: _currentLocation.latitude + 0.0022, longitude: _currentLocation.longitude + 0.0018),
+          point: Point(latitude: _fromPoint.latitude + 0.0022, longitude: _fromPoint.longitude + 0.0018),
           icon: PlacemarkIcon.single(PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(taxiIcon), scale: 0.85)),
         ),
       );
       _mapObjects.add(
         PlacemarkMapObject(
           mapId: const MapObjectId('taxi_2'),
-          point: Point(latitude: _currentLocation.latitude - 0.0018, longitude: _currentLocation.longitude + 0.0028),
+          point: Point(latitude: _fromPoint.latitude - 0.0018, longitude: _fromPoint.longitude + 0.0028),
           icon: PlacemarkIcon.single(PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(taxiIcon), scale: 0.85)),
         ),
       );
@@ -721,96 +868,256 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     return raw;
   }
 
-  void _showManualDestinationDialog() {
-    final TextEditingController searchCtrl = TextEditingController(text: _toAddress);
+  // ==================== JONLI QIDIRUV OYNASI (A VA B NUQTALAR UCHUN) ====================
+  void _openLiveAddressSearchSheet({required bool isFrom}) {
+    final TextEditingController searchCtrl = TextEditingController(text: isFrom ? "" : _toAddress);
+    List<AddressSuggestion> suggestions = [];
+    bool isLoading = false;
+    Timer? debounce;
+
+    Future<void> runSearch(String query, StateSetter setModalState) async {
+      final q = query.trim();
+      if (q.length < 2) {
+        setModalState(() {
+          suggestions = [];
+          isLoading = false;
+        });
+        return;
+      }
+
+      setModalState(() => isLoading = true);
+      try {
+        // Siz turgan hudud atrofidan (+/- 35 km radiusda) birinchi navbatda qidiradi
+        final session = YandexSearch.searchByText(
+          searchText: q,
+          geometry: Geometry.fromBoundingBox(
+            BoundingBox(
+              southWest: Point(
+                latitude: _fromPoint.latitude - 0.35,
+                longitude: _fromPoint.longitude - 0.35,
+              ),
+              northEast: Point(
+                latitude: _fromPoint.latitude + 0.35,
+                longitude: _fromPoint.longitude + 0.35,
+              ),
+            ),
+          ),
+          searchOptions: const SearchOptions(
+            searchType: SearchType.geo,
+            resultPageSize: 10,
+          ),
+        );
+        final res = await session.result;
+        final List<AddressSuggestion> found = [];
+        if (res.items != null) {
+          for (final item in res.items!) {
+            if (item.geometry.isNotEmpty && item.geometry.first.point != null) {
+              final pt = item.geometry.first.point!;
+              final dist = _calculateStraightDistance(_fromPoint, pt);
+              String sub = item.toponymMetadata?.address.formattedAddress ?? "${dist} km uzoqlikda";
+              found.add(AddressSuggestion(
+                title: item.name,
+                subtitle: sub,
+                point: pt,
+              ));
+            }
+          }
+        }
+        setModalState(() {
+          suggestions = found;
+          isLoading = false;
+        });
+      } catch (_) {
+        setModalState(() => isLoading = false);
+      }
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          left: 20,
-          right: 20,
-          top: 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Boradigan manzilni kiriting", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: searchCtrl,
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: "Masalan: Markaziy bozor, Aeroport...",
-                prefixIcon: const Icon(Icons.search, color: kBekGreen),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return FractionallySizedBox(
+            heightFactor: 0.85,
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                left: 16,
+                right: 16,
+                top: 16,
               ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
-                onPressed: () async {
-                  final text = searchCtrl.text.trim();
-                  Navigator.pop(ctx);
-                  if (text.isEmpty) return;
-
-                  setState(() {
-                    _isSearchingAddress = true;
-                    _toAddress = text;
-                  });
-
-                  try {
-                    final session = YandexSearch.searchByText(
-                      searchText: text,
-                      geometry: Geometry.fromBoundingBox(
-                        BoundingBox(
-                          southWest: Point(
-                            latitude: _currentLocation.latitude - 0.2,
-                            longitude: _currentLocation.longitude - 0.2,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        isFrom ? "Qayerdan olamiz? (A nuqta)" : "Qayerga boramiz? (B nuqta)",
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: searchCtrl,
+                    autofocus: true,
+                    onChanged: (val) {
+                      debounce?.cancel();
+                      debounce = Timer(const Duration(milliseconds: 350), () {
+                        runSearch(val, setModalState);
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: isFrom
+                          ? "Boshqa manzil yoki ko'cha nomini yozing..."
+                          : "Ko'cha, bino yoki obyektni yozing...",
+                      prefixIcon: Icon(isFrom ? Icons.my_location : Icons.search, color: isFrom ? kBekGreen : Colors.red),
+                      suffixIcon: searchCtrl.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                searchCtrl.clear();
+                                runSearch("", setModalState);
+                              },
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: Colors.grey.shade100,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // Tezkor tugmalar: Xaritadan ko'rsatish yoki Joriy GPS joylashuv
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.black87,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
-                          northEast: Point(
-                            latitude: _currentLocation.latitude + 0.2,
-                            longitude: _currentLocation.longitude + 0.2,
-                          ),
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            setState(() => _mapTapTarget = isFrom ? 'from' : 'to');
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              SnackBar(
+                                content: Text(isFrom
+                                    ? "Xaritadan A (Qayerdan olish) nuqtasini bosing!"
+                                    : "Xaritadan B (Boradigan) nuqtani bosing!"),
+                                backgroundColor: isFrom ? kBekGreen : Colors.redAccent,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.pin_drop_outlined, size: 18),
+                          label: const Text("Xaritadan tanlash", style: TextStyle(fontSize: 13)),
                         ),
                       ),
-                      searchOptions: const SearchOptions(searchType: SearchType.geo),
-                    );
-                    final res = await session.result;
-                    if (res.items != null &&
-                        res.items!.isNotEmpty &&
-                        res.items!.first.geometry.isNotEmpty &&
-                        res.items!.first.geometry.first.point != null) {
-                      _destinationLocation = res.items!.first.geometry.first.point!;
-                      _toAddress = res.items!.first.name;
-                    } else {
-                      _destinationLocation ??= Point(
-                        latitude: _currentLocation.latitude + 0.008,
-                        longitude: _currentLocation.longitude + 0.008,
-                      );
-                    }
-                  } catch (_) {
-                    _destinationLocation ??= Point(
-                      latitude: _currentLocation.latitude + 0.008,
-                      longitude: _currentLocation.longitude + 0.008,
-                    );
-                  }
-
-                  setState(() => _isSearchingAddress = false);
-                  await _updateMapObjects();
-                  await _buildRoute();
-                },
-                child: const Text("MANZILNI TASDIQLASH", style: TextStyle(fontWeight: FontWeight.bold)),
+                      if (isFrom) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: kBekGreen,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _determinePosition(immediateJump: false);
+                            },
+                            icon: const Icon(Icons.gps_fixed, size: 18),
+                            label: const Text("Mening joyim", style: TextStyle(fontSize: 13)),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  if (isLoading)
+                    const LinearProgressIndicator(color: kBekGreen),
+                  Expanded(
+                    child: suggestions.isEmpty
+                        ? Center(
+                            child: Text(
+                              searchCtrl.text.trim().length < 2
+                                  ? "Manzil nomini yozishni boshlang,\no'xshash manzillar shu yerda chiqadi..."
+                                  : (isLoading ? "Qidirilmoqda..." : "Mos manzil topilmadi"),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: suggestions.length,
+                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            itemBuilder: (context, idx) {
+                              final item = suggestions[idx];
+                              final dist = _calculateStraightDistance(_fromPoint, item.point);
+                              return ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: isFrom ? Colors.green.shade50 : Colors.red.shade50,
+                                  child: Icon(
+                                    Icons.location_on,
+                                    color: isFrom ? kBekGreen : Colors.red,
+                                  ),
+                                ),
+                                title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                subtitle: Text(
+                                  item.subtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                                ),
+                                trailing: Text(
+                                  "$dist km",
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: kBekGreen),
+                                ),
+                                onTap: () async {
+                                  Navigator.pop(ctx);
+                                  if (isFrom) {
+                                    setState(() {
+                                      _fromPoint = item.point;
+                                      _fromAddress = item.title;
+                                      _mapTapTarget = 'to';
+                                    });
+                                    await _updateMapObjects();
+                                    if (_destinationLocation != null) {
+                                      await _buildRoute();
+                                    } else if (_mapController != null) {
+                                      await _mapController!.moveCamera(
+                                        CameraUpdate.newCameraPosition(CameraPosition(target: _fromPoint, zoom: 16)),
+                                        animation: const MapAnimation(type: MapAnimationType.smooth, duration: 1.0),
+                                      );
+                                    }
+                                  } else {
+                                    setState(() {
+                                      _destinationLocation = item.point;
+                                      _toAddress = item.title;
+                                      _mapTapTarget = 'to';
+                                    });
+                                    await _updateMapObjects();
+                                    await _buildRoute();
+                                  }
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -820,7 +1127,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       HapticFeedback.vibrate();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Iltimos, xaritadan boradigan manzilingizni bosing yoki yozing!"),
+          content: Text("Iltimos, boradigan manzilni (B nuqtani) tanlang!"),
           backgroundColor: Colors.red,
           duration: Duration(seconds: 2),
         ),
@@ -833,7 +1140,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       clientPhone: "+998 90 267 25 80",
       fromAddress: _fromAddress,
       toAddress: _toAddress,
-      fromPoint: _currentLocation,
+      fromPoint: _fromPoint,
       toPoint: _destinationLocation!,
       tariff: _selectedTariff,
       distanceKm: _distanceKm,
@@ -865,20 +1172,33 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                   activeOrd.status != 'Bekor qilindi' &&
                   activeOrd.status != 'Yakunlandi') return;
 
-              setState(() {
-                _destinationLocation = point;
-                _isSearchingAddress = true;
-                _toAddress = "Manzil aniqlanmoqda...";
-              });
-
-              await _updateMapObjects();
-              await _buildRoute();
-              final addrName = await _reverseGeocode(point);
-              if (mounted) {
+              if (_mapTapTarget == 'from') {
                 setState(() {
-                  _toAddress = addrName;
-                  _isSearchingAddress = false;
+                  _fromPoint = point;
+                  _fromAddress = "Manzil aniqlanmoqda...";
+                  _mapTapTarget = 'to';
                 });
+                await _updateMapObjects();
+                if (_destinationLocation != null) await _buildRoute();
+                final addrName = await _reverseGeocode(point);
+                if (mounted) {
+                  setState(() => _fromAddress = addrName);
+                }
+              } else {
+                setState(() {
+                  _destinationLocation = point;
+                  _isSearchingAddress = true;
+                  _toAddress = "Manzil aniqlanmoqda...";
+                });
+                await _updateMapObjects();
+                await _buildRoute();
+                final addrName = await _reverseGeocode(point);
+                if (mounted) {
+                  setState(() {
+                    _toAddress = addrName;
+                    _isSearchingAddress = false;
+                  });
+                }
               }
             },
           ),
@@ -925,7 +1245,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             left: 0,
             right: 0,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
               decoration: const BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -980,7 +1300,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       statusTitle = "Haydovchi yo'lga chiqdi!";
     } else if (st == 'Yetib keldi') {
       badgeColor = kBekGreen;
-      statusTitle = "Haydovchi sizni kutmoqda!";
+      statusTitle = "Haydovchi aytilgan manzilda kutmoqda!";
     } else if (st == 'Safarda') {
       badgeColor = Colors.purple;
       statusTitle = "Safar davom etmoqda...";
@@ -1048,54 +1368,82 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Icon(Icons.my_location, color: kBekGreen, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                _fromAddress,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-              ),
-            ),
-          ],
-        ),
-        const Divider(height: 18),
+        // A NUQTA: QAYERDAN OLISH (Endi bosiladi va boshqa joyga ham buyurtma berib bo'ladi!)
         InkWell(
-          onTap: _showManualDestinationDialog,
-          child: Row(
-            children: [
-              const Icon(Icons.location_on, color: Colors.red, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  _isSearchingAddress
-                      ? "Manzil qidirilmoqda..."
-                      : (_toAddress.isEmpty ? "Qayerga ketyapsiz? (Xaritadan bosing yoki yozing)" : _toAddress),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _toAddress.isEmpty ? Colors.grey.shade600 : Colors.black,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
+          onTap: () => _openLiveAddressSearchSheet(isFrom: true),
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6.0),
+            child: Row(
+              children: [
+                const Icon(Icons.my_location, color: kBekGreen, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Qayerdan olamiz? (O'zgartirish uchun bosing)", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text(
+                        _fromAddress,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              if (_destinationLocation != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
-                  child: Text(
-                    "$_distanceKm km • ~$_etaMinutes daq",
-                    style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 12),
-                  ),
-                ),
-            ],
+                const Icon(Icons.edit_location_alt_outlined, color: kBekGreen, size: 20),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 14),
+        const Divider(height: 12),
+        // B NUQTA: QAYERGA BORISH (Jonli qidiruv ro'yxati bilan)
+        InkWell(
+          onTap: () => _openLiveAddressSearchSheet(isFrom: false),
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6.0),
+            child: Row(
+              children: [
+                const Icon(Icons.location_on, color: Colors.red, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Qayerga borasiz?", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text(
+                        _isSearchingAddress
+                            ? "Manzil aniqlanmoqda..."
+                            : (_toAddress.isEmpty ? "Manzilni qidirish yoki xaritadan bosish" : _toAddress),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _toAddress.isEmpty ? Colors.grey.shade600 : Colors.black,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_destinationLocation != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
+                    child: Text(
+                      "$_distanceKm km • ~$_etaMinutes daq",
+                      style: const TextStyle(color: kBekGreen, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  )
+                else
+                  const Icon(Icons.search, color: Colors.grey, size: 20),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -1158,7 +1506,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   }
 }
 
-// ==================== 2. HAYDOVCHI TERMINALI (100% REAL-TIME) ====================
+// ==================== 2. HAYDOVCHI TERMINALI ====================
 class DriverTerminalScreen extends StatelessWidget {
   final AppState state;
   const DriverTerminalScreen({super.key, required this.state});
@@ -1229,6 +1577,7 @@ class DriverTerminalScreen extends StatelessWidget {
                             onChanged: (val) {
                               if (val != null) {
                                 state.activeDriverIndex = val;
+                                state.saveToStorage();
                                 state.notifyListeners();
                               }
                             },
@@ -1264,31 +1613,28 @@ class DriverTerminalScreen extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 6),
-                        Text("Qayerdan: ${ord.fromAddress}", style: const TextStyle(fontSize: 13)),
-                        Text("Qayerga: ${ord.toAddress}", style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        Text("📍 Oladi: ${ord.fromAddress}", style: const TextStyle(fontSize: 13)),
+                        Text("🏁 Boradi: ${ord.toAddress}", style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
-                                onPressed: () {
-                                  String next = 'Yetib keldi';
-                                  if (ord.status == 'Yetib keldi') next = 'Safarda';
-                                  if (ord.status == 'Safarda') next = 'Yakunlandi';
-                                  state.updateOrderStatus(ord.id, next, driver);
-                                },
-                                child: Text(
-                                  ord.status == 'Qabul qilindi'
-                                      ? "YETIB KELDIM"
-                                      : ord.status == 'Yetib keldi'
-                                          ? "SAFARNI BOSHLASH"
-                                          : "SAFARNI YAKUNLASH",
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                              ),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
+                            onPressed: () {
+                              String next = 'Yetib keldi';
+                              if (ord.status == 'Yetib keldi') next = 'Safarda';
+                              if (ord.status == 'Safarda') next = 'Yakunlandi';
+                              state.updateOrderStatus(ord.id, next, driver);
+                            },
+                            child: Text(
+                              ord.status == 'Qabul qilindi'
+                                  ? "MANZILGA YETIB KELDIM"
+                                  : ord.status == 'Yetib keldi'
+                                      ? "SAFARNI BOSHLASH"
+                                      : "SAFARNI YAKUNLASH",
+                              style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
-                          ],
+                          ),
                         ),
                       ],
                     ),
@@ -1375,7 +1721,7 @@ class DriverTerminalScreen extends StatelessWidget {
   }
 }
 
-// ==================== 3. OPERATOR MARKAZI (TO'LIQ DISPETCHER PANELI) ====================
+// ==================== 3. OPERATOR MARKAZI ====================
 class OperatorView extends StatefulWidget {
   final AppState state;
   const OperatorView({super.key, required this.state});
@@ -1506,7 +1852,8 @@ class _OperatorViewState extends State<OperatorView> {
                         child: ListTile(
                           dense: true,
                           title: Text("${o.id} • ${o.toAddress} (${o.price} so'm)", style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text("Holat: ${o.status} • Haydovchi: ${o.driverName ?? 'Biriktirilmagan'}"),
+                          subtitle: Text("Oladi: ${o.fromAddress}\nHolat: ${o.status} • Haydovchi: ${o.driverName ?? 'Biriktirilmagan'}"),
+                          isThreeLine: true,
                           trailing: o.status == 'Kutilmoqda'
                               ? IconButton(
                                   icon: const Icon(Icons.cancel, color: Colors.red),
@@ -1524,7 +1871,7 @@ class _OperatorViewState extends State<OperatorView> {
   }
 }
 
-// ==================== 4. SUPER-ADMIN PANELI (TO'LIQ BOSHQARUV) ====================
+// ==================== 4. SUPER-ADMIN PANELI (DOIMIY XOTIRAGA SAQLAYDI) ====================
 class AdminView extends StatefulWidget {
   final AppState state;
   const AdminView({super.key, required this.state});
@@ -1556,42 +1903,54 @@ class _AdminViewState extends State<AdminView> {
     final carCtrl = TextEditingController();
     final numCtrl = TextEditingController();
     final balCtrl = TextEditingController(text: "100000");
+    String tariff = "Standart";
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Yangi haydovchi qo'shish", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "F.I.Sh")),
-              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: "Telefon raqami")),
-              TextField(controller: carCtrl, decoration: const InputDecoration(labelText: "Mashina rusumi va rangi")),
-              TextField(controller: numCtrl, decoration: const InputDecoration(labelText: "Davlat raqami")),
-              TextField(controller: balCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Boshlang'ich balans")),
-            ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDState) => AlertDialog(
+          title: const Text("Yangi haydovchi qo'shish", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "F.I.Sh")),
+                TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: "Telefon raqami")),
+                TextField(controller: carCtrl, decoration: const InputDecoration(labelText: "Mashina rusumi va rangi")),
+                TextField(controller: numCtrl, decoration: const InputDecoration(labelText: "Davlat raqami")),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: tariff,
+                  decoration: const InputDecoration(labelText: "Tarif toifasi"),
+                  items: ["Standart", "Komfort", "Dostavka"]
+                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                      .toList(),
+                  onChanged: (v) => setDState(() => tariff = v!),
+                ),
+                TextField(controller: balCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Boshlang'ich balans")),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Bekor qilish")),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
+              onPressed: () {
+                if (nameCtrl.text.trim().isEmpty) return;
+                widget.state.addDriver(
+                  nameCtrl.text.trim(),
+                  phoneCtrl.text.trim(),
+                  carCtrl.text.trim().isEmpty ? "Oq Cobalt" : carCtrl.text.trim(),
+                  numCtrl.text.trim().isEmpty ? "01 A 000 AA" : numCtrl.text.trim(),
+                  tariff,
+                  int.tryParse(balCtrl.text) ?? 100000,
+                );
+                Navigator.pop(ctx);
+              },
+              child: const Text("SAQLASH"),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Bekor qilish")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
-            onPressed: () {
-              if (nameCtrl.text.trim().isEmpty) return;
-              widget.state.addDriver(
-                nameCtrl.text.trim(),
-                phoneCtrl.text.trim(),
-                carCtrl.text.trim().isEmpty ? "Oq Cobalt" : carCtrl.text.trim(),
-                numCtrl.text.trim().isEmpty ? "01 A 000 AA" : numCtrl.text.trim(),
-                "Standart",
-                int.tryParse(balCtrl.text) ?? 100000,
-              );
-              Navigator.pop(ctx);
-            },
-            child: const Text("QO'SHISH"),
-          ),
-        ],
       ),
     );
   }
@@ -1610,7 +1969,7 @@ class _AdminViewState extends State<AdminView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("Tarif va Komissiya sozlamalari", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const Text("Tarif va Komissiya sozlamalari (Doimiy saqlanadi)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -1660,7 +2019,7 @@ class _AdminViewState extends State<AdminView> {
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
-                    height: 44,
+                    height: 46,
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(backgroundColor: kBekGreen, foregroundColor: Colors.white),
                       onPressed: () {
@@ -1675,11 +2034,11 @@ class _AdminViewState extends State<AdminView> {
                           comm: double.tryParse(_commCtrl.text) ?? 10.0,
                         );
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Yangi tariflar saqlandi!"), backgroundColor: kBekGreen),
+                          const SnackBar(content: Text("Tariflar doimiy xotiraga saqlandi!"), backgroundColor: kBekGreen),
                         );
                       },
                       icon: const Icon(Icons.save),
-                      label: const Text("TARIFLARNI SAQLASH", style: TextStyle(fontWeight: FontWeight.bold)),
+                      label: const Text("DOIMIY XOTIRAGA SAQLASH", style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -1703,11 +2062,21 @@ class _AdminViewState extends State<AdminView> {
           ...widget.state.drivers.map((d) => Card(
                 child: ListTile(
                   title: Text("${d.name} (${d.carNumber})", style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text("${d.carModel} • Balans: ${d.balance} so'm"),
-                  trailing: TextButton.icon(
-                    onPressed: () => widget.state.topUpDriverBalance(d.id, 50000),
-                    icon: const Icon(Icons.add_circle, color: kBekGreen, size: 18),
-                    label: const Text("+50 ming", style: TextStyle(color: kBekGreen, fontWeight: FontWeight.bold)),
+                  subtitle: Text("${d.carModel} • ${d.tariffType} • Balans: ${d.balance} so'm"),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => widget.state.topUpDriverBalance(d.id, 50000),
+                        icon: const Icon(Icons.add_circle, color: kBekGreen, size: 18),
+                        label: const Text("+50m", style: TextStyle(color: kBekGreen, fontWeight: FontWeight.bold)),
+                      ),
+                      if (widget.state.drivers.length > 1)
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                          onPressed: () => widget.state.deleteDriver(d.id),
+                        ),
+                    ],
                   ),
                 ),
               )),
