@@ -1,5 +1,6 @@
 // ============================================================================
-// ELEGANT TAXI - CLOUD PRO (1-QISM)
+// ELEGANT TAXI - CLOUD PRO v4.0 (1-QISM)
+// SMS.RU REAL API + REALTIME FIREBASE + PREMIUM UI
 // ============================================================================
 import 'dart:async';
 import 'dart:convert';
@@ -23,6 +24,7 @@ const Color kAccentYellow = Color(0xFFFFCC00);
 const Color kDarkBg = Color(0xFF14171F);
 const Color kDarkCard = Color(0xFF1E222D);
 const String kFirebaseDbUrl = "https://elegant-taxi-b4e46-default-rtdb.firebaseio.com";
+const String kSmsRuApiId = "5E690BBC-C5D8-A611-97B8-3BC185697858";
 
 class AppStrings {
   static Map<String, Map<String, String>> data = {
@@ -156,6 +158,9 @@ class OrderModel {
   String? driverName;
   String? driverCar;
   String? driverPhone;
+  double? driverLat;
+  double? driverLon;
+  bool closedByClient;
   final DateTime createdAt;
   int updatedAtMs;
 
@@ -175,6 +180,9 @@ class OrderModel {
     this.driverName,
     this.driverCar,
     this.driverPhone,
+    this.driverLat,
+    this.driverLon,
+    this.closedByClient = false,
     required this.createdAt,
     int? updatedAtMs,
   }) : updatedAtMs = updatedAtMs ?? DateTime.now().millisecondsSinceEpoch;
@@ -197,6 +205,9 @@ class OrderModel {
         'driverName': driverName,
         'driverCar': driverCar,
         'driverPhone': driverPhone,
+        'driverLat': driverLat,
+        'driverLon': driverLon,
+        'closedByClient': closedByClient,
         'createdAt': createdAt.toIso8601String(),
         'updatedAtMs': updatedAtMs,
       };
@@ -207,12 +218,12 @@ class OrderModel {
         fromAddress: j['fromAddress']?.toString() ?? '',
         toAddress: j['toAddress']?.toString() ?? '',
         fromPoint: Point(
-          latitude: (j['fromLat'] ?? 41.3111).toDouble(),
-          longitude: (j['fromLon'] ?? 69.2797).toDouble(),
+          latitude: (j['fromLat'] ?? 55.7158).toDouble(),
+          longitude: (j['fromLon'] ?? 37.7869).toDouble(),
         ),
         toPoint: Point(
-          latitude: (j['toLat'] ?? 41.3200).toDouble(),
-          longitude: (j['toLon'] ?? 69.2900).toDouble(),
+          latitude: (j['toLat'] ?? 55.7250).toDouble(),
+          longitude: (j['toLon'] ?? 37.7950).toDouble(),
         ),
         tariff: j['tariff']?.toString() ?? 'Standart',
         distanceKm: (j['distanceKm'] ?? 1.5).toDouble(),
@@ -223,6 +234,9 @@ class OrderModel {
         driverName: j['driverName']?.toString(),
         driverCar: j['driverCar']?.toString(),
         driverPhone: j['driverPhone']?.toString(),
+        driverLat: j['driverLat'] != null ? (j['driverLat'] as num).toDouble() : null,
+        driverLon: j['driverLon'] != null ? (j['driverLon'] as num).toDouble() : null,
+        closedByClient: j['closedByClient'] == true,
         createdAt: DateTime.tryParse(j['createdAt']?.toString() ?? '') ?? DateTime.now(),
         updatedAtMs: (j['updatedAtMs'] ?? 0).toInt(),
       );
@@ -263,8 +277,8 @@ class DriverModel {
         'trips': trips,
         'balance': balance,
         'isOnline': isOnline,
-        'lat': location?.latitude ?? 41.3111,
-        'lon': location?.longitude ?? 69.2797,
+        'lat': location?.latitude ?? 55.7158,
+        'lon': location?.longitude ?? 37.7869,
       };
 
   factory DriverModel.fromJson(Map<String, dynamic> j) => DriverModel(
@@ -278,8 +292,8 @@ class DriverModel {
         balance: (j['balance'] ?? 0).toInt(),
         isOnline: j['isOnline'] ?? true,
         location: Point(
-          latitude: (j['lat'] ?? 41.3111).toDouble(),
-          longitude: (j['lon'] ?? 69.2797).toDouble(),
+          latitude: (j['lat'] ?? 55.7158).toDouble(),
+          longitude: (j['lon'] ?? 37.7869).toDouble(),
         ),
       );
 }
@@ -302,15 +316,21 @@ class FavoritePlace {
         title: j['title']?.toString() ?? 'Manzil',
         address: j['address']?.toString() ?? '',
         point: Point(
-          latitude: (j['lat'] ?? 41.3111).toDouble(),
-          longitude: (j['lon'] ?? 69.2797).toDouble(),
+          latitude: (j['lat'] ?? 55.7158).toDouble(),
+          longitude: (j['lon'] ?? 37.7869).toDouble(),
         ),
       );
 }
 
+class SmsSendResult {
+  final bool sentViaApi;
+  final String message;
+  SmsSendResult({required this.sentViaApi, required this.message});
+}
+
 class AppState extends ChangeNotifier {
   static const MethodChannel _nativeChannel = MethodChannel('com.example.elegant_taxi/native');
-  final HttpClient _http = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  final HttpClient _http = HttpClient()..connectionTimeout = const Duration(seconds: 6);
   Timer? _syncTimer;
   bool _isSyncing = false;
 
@@ -337,7 +357,7 @@ class AppState extends ChangeNotifier {
   bool pushEnabled = true;
   bool isFirebaseConnected = false;
 
-  Set<String> knownPendingOrderIds = {};
+  Set<String> dismissedOrderIds = {};
   Map<String, String> knownOrderStatuses = {};
   List<OrderModel> orders = [];
   List<FavoritePlace> favorites = [];
@@ -350,8 +370,8 @@ class AppState extends ChangeNotifier {
       carModel: "Oq Chevrolet Cobalt",
       carNumber: "75 A 777 AA",
       tariffType: "Standart",
-      trips: 144,
-      balance: 584200,
+      trips: 147,
+      balance: 581700,
     ),
     DriverModel(
       id: "D2",
@@ -371,7 +391,7 @@ class AppState extends ChangeNotifier {
     await loadFromStorage();
     await syncFromFirebase(isInitial: true);
     _syncTimer?.cancel();
-    _syncTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) => syncFromFirebase());
+    _syncTimer = Timer.periodic(const Duration(milliseconds: 1400), (_) => syncFromFirebase());
   }
 
   Future<void> loadFromStorage() async {
@@ -396,6 +416,9 @@ class AppState extends ChangeNotifier {
         geoEnabled = data['geoEnabled'] ?? true;
         pushEnabled = data['pushEnabled'] ?? true;
 
+        if (data['dismissedOrderIds'] is List) {
+          dismissedOrderIds = List<String>.from(data['dismissedOrderIds']).toSet();
+        }
         if (data['favorites'] is List) {
           favorites = (data['favorites'] as List).map((e) => FavoritePlace.fromJson(e)).toList();
         }
@@ -408,7 +431,9 @@ class AppState extends ChangeNotifier {
         if (activeDriverIndex >= drivers.length) activeDriverIndex = 0;
         for (final o in orders) {
           knownOrderStatuses[o.id] = o.status;
-          if (o.status == 'Kutilmoqda') knownPendingOrderIds.add(o.id);
+          if (o.closedByClient || o.status == 'Yakunlandi' || o.status == 'Bekor qilindi') {
+            dismissedOrderIds.add(o.id);
+          }
         }
       }
     } catch (_) {}
@@ -433,12 +458,59 @@ class AppState extends ChangeNotifier {
         'isDarkMode': isDarkMode,
         'geoEnabled': geoEnabled,
         'pushEnabled': pushEnabled,
+        'dismissedOrderIds': dismissedOrderIds.toList(),
         'favorites': favorites.map((f) => f.toJson()).toList(),
         'drivers': drivers.map((d) => d.toJson()).toList(),
         'orders': orders.map((o) => o.toJson()).toList(),
       };
       await _nativeChannel.invokeMethod('saveData', {'data': jsonEncode(localData)});
     } catch (_) {}
+  }
+
+  // SMS.RU ORQALI HAQIQIY SMS JO'NATISH FUNKSIYASI
+  Future<SmsSendResult> sendRealSmsViaSmsRu(String phoneDigits, String otpCode) async {
+    try {
+      await _putJson("elegant_cloud/otps/$phoneDigits", {
+        'code': otpCode,
+        'phone': phoneDigits,
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {}
+
+    try {
+      final String msgText = "Elegant Taxi: Kod: $otpCode";
+      final Uri smsUri = Uri.parse(
+        "https://sms.ru/sms/send?api_id=$kSmsRuApiId&to=$phoneDigits&msg=${Uri.encodeComponent(msgText)}&json=1",
+      );
+      final HttpClientRequest req = await _http.getUrl(smsUri);
+      final HttpClientResponse res = await req.close();
+      final String rawBody = await res.transform(utf8.decoder).join();
+
+      if (res.statusCode == 200 && rawBody.isNotEmpty) {
+        final Map<String, dynamic> jsonRes = jsonDecode(rawBody);
+        if (jsonRes['status'] == 'OK') {
+          final Map<String, dynamic>? smsMap = jsonRes['sms'] is Map ? Map<String, dynamic>.from(jsonRes['sms']) : null;
+          if (smsMap != null && smsMap.isNotEmpty) {
+            final firstEntry = smsMap.values.first;
+            if (firstEntry is Map && firstEntry['status'] == 'OK') {
+              return SmsSendResult(
+                sentViaApi: true,
+                message: "+$phoneDigits raqamiga SMS yuborildi!",
+              );
+            } else if (firstEntry is Map && firstEntry['status_text'] != null) {
+              return SmsSendResult(
+                sentViaApi: false,
+                message: "SMS.ru javobi: ${firstEntry['status_text']}",
+              );
+            }
+          }
+          return SmsSendResult(sentViaApi: true, message: "+$phoneDigits raqamiga SMS jo'natildi!");
+        }
+      }
+      return SmsSendResult(sentViaApi: false, message: "SMS shlyuz javobini tekshiring");
+    } catch (e) {
+      return SmsSendResult(sentViaApi: false, message: "Internet orqali SMS yuborishda ulanish xatosi");
+    }
   }
 
   Future<void> _putJson(String path, Map<String, dynamic> payload) async {
@@ -450,7 +522,6 @@ class AppState extends ChangeNotifier {
     await res.drain();
   }
 
-  // Har bir buyurtmani alohida tugunga yozish (Ikkita telefon bir-birini ustidan bosib yubormasligi uchun)
   Future<void> pushSingleOrderToFirebase(OrderModel order) async {
     try {
       await _putJson("elegant_cloud/orders/${order.id}", order.toJson());
@@ -477,7 +548,6 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // Foydalanuvchi profilini telefon raqami bo'yicha Firebase'da saqlash va tiklash
   Future<void> syncUserProfileWithCloud({bool pullFirst = false}) async {
     final key = cleanPhoneKey;
     if (key.length < 7) return;
@@ -569,6 +639,12 @@ class AppState extends ChangeNotifier {
                 .toList();
             cloudOrders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+            for (final co in cloudOrders) {
+              if (dismissedOrderIds.contains(co.id)) {
+                co.closedByClient = true;
+              }
+            }
+
             final oldJson = jsonEncode(orders.map((o) => o.toJson()).toList());
             final newJson = jsonEncode(cloudOrders.map((o) => o.toJson()).toList());
             if (oldJson != newJson) {
@@ -645,6 +721,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Safar yakunlangach "YANGI BUYURTMA BERISH" bosilganda qotib qolmaslik uchun yopish funksiyasi
+  void dismissCompletedOrder(String orderId) {
+    dismissedOrderIds.add(orderId);
+    final idx = orders.indexWhere((o) => o.id == orderId);
+    if (idx != -1) {
+      orders[idx].closedByClient = true;
+      orders[idx].updatedAtMs = DateTime.now().millisecondsSinceEpoch;
+      pushSingleOrderToFirebase(orders[idx]);
+    }
+    saveToStorage();
+    notifyListeners();
+  }
+
   void updateOrderStatus(String orderId, String newStatus, DriverModel driver) {
     final idx = orders.indexWhere((o) => o.id == orderId);
     if (idx != -1) {
@@ -654,6 +743,22 @@ class AppState extends ChangeNotifier {
       orders[idx].driverPhone = driver.phone;
       orders[idx].driverCar = "${driver.carModel} • ${driver.carNumber}";
       orders[idx].updatedAtMs = DateTime.now().millisecondsSinceEpoch;
+
+      // Haydovchi mashinasi xaritada mijozga qarab siljish koordinatalari
+      if (newStatus == 'Qabul qilindi') {
+        orders[idx].driverLat = orders[idx].fromPoint.latitude + 0.0022;
+        orders[idx].driverLon = orders[idx].fromPoint.longitude + 0.0018;
+      } else if (newStatus == 'Yetib keldi') {
+        orders[idx].driverLat = orders[idx].fromPoint.latitude;
+        orders[idx].driverLon = orders[idx].fromPoint.longitude;
+      } else if (newStatus == 'Safarda') {
+        orders[idx].driverLat = (orders[idx].fromPoint.latitude + orders[idx].toPoint.latitude) / 2;
+        orders[idx].driverLon = (orders[idx].fromPoint.longitude + orders[idx].toPoint.longitude) / 2;
+      } else if (newStatus == 'Yakunlandi') {
+        orders[idx].driverLat = orders[idx].toPoint.latitude;
+        orders[idx].driverLon = orders[idx].toPoint.longitude;
+      }
+
       knownOrderStatuses[orderId] = newStatus;
 
       if (newStatus == 'Yakunlandi') {
@@ -674,9 +779,11 @@ class AppState extends ChangeNotifier {
   }
 
   void cancelOrder(String orderId) {
+    dismissedOrderIds.add(orderId);
     final idx = orders.indexWhere((o) => o.id == orderId);
     if (idx != -1) {
       orders[idx].status = 'Bekor qilindi';
+      orders[idx].closedByClient = true;
       orders[idx].updatedAtMs = DateTime.now().millisecondsSinceEpoch;
       knownOrderStatuses[orderId] = 'Bekor qilindi';
       saveToStorage();
@@ -806,7 +913,7 @@ class ElegantTaxiApp extends StatelessWidget {
 }
 
 // ============================================================================
-// TELEFON RAQAMI VA SMS KOD ORQALI KIRISH EKRANI (Bulutli sinxronizatsiya bilan)
+// TELEFON RAQAMI VA SMS.RU REAL API ORQALI KIRISH EKRANI
 // ============================================================================
 class PhoneAuthScreen extends StatefulWidget {
   const PhoneAuthScreen({super.key});
@@ -819,61 +926,80 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
   final TextEditingController _phoneCtrl = TextEditingController();
   final TextEditingController _otpCtrl = TextEditingController();
 
-  String _countryCode = "+998";
+  String _countryCode = "+7";
   bool _codeSent = false;
   String _generatedOtp = "";
   String? _errorMsg;
+  String? _statusBanner;
   bool _isLoading = false;
+  bool _showBackupCodeHint = false;
 
-  void _sendSmsCode() {
+  Future<void> _sendSmsCode() async {
     final name = _nameCtrl.text.trim();
-    final rawPhone = _phoneCtrl.text.replaceAll(RegExp(r'[^0-9]'), '');
+    String rawDigits = _phoneCtrl.text.replaceAll(RegExp(r'[^0-9]'), '');
+
     if (name.isEmpty) {
       setState(() => _errorMsg = "Iltimos, ismingizni kiriting");
       return;
     }
-    if (rawPhone.length < 7) {
+    if (rawDigits.length < 9) {
       setState(() => _errorMsg = "Telefon raqamni to'liq kiriting");
       return;
     }
 
-    final code = (Random().nextInt(9000) + 1000).toString();
-    appState.playNotificationSound();
+    // Agar foydalanuvchi 10 xonali Rossiya raqamini (masalan 9671370738) yozsa, avtomatik +7 qiladi
+    if (rawDigits.length == 10 && rawDigits.startsWith('9')) {
+      _countryCode = "+7";
+    } else if (rawDigits.length == 11 && rawDigits.startsWith('79')) {
+      _countryCode = "+7";
+      rawDigits = rawDigits.substring(1);
+      _phoneCtrl.text = rawDigits;
+    } else if (rawDigits.length == 12 && rawDigits.startsWith('998')) {
+      _countryCode = "+998";
+      rawDigits = rawDigits.substring(3);
+      _phoneCtrl.text = rawDigits;
+    }
+
+    final String fullDigits = "${_countryCode.replaceAll('+', '')}$rawDigits";
+    final String code = (Random().nextInt(9000) + 1000).toString();
+
     setState(() {
-      _generatedOtp = code;
-      _codeSent = true;
+      _isLoading = true;
       _errorMsg = null;
-      _otpCtrl.text = code;
+      _statusBanner = null;
+      _showBackupCodeHint = false;
+      _otpCtrl.clear(); // Katakcha bo'sh turadi, foydalanuvchi SMS'dan kelgan kodni o'zi yozadi!
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: kPrimaryGreen,
-        duration: const Duration(seconds: 6),
-        content: Row(
-          children: [
-            const Icon(Icons.sms, color: Colors.white),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                "Elegant Taxi SMS kodi: $code",
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    final SmsSendResult res = await appState.sendRealSmsViaSmsRu(fullDigits, code);
+    appState.playNotificationSound();
+
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _generatedOtp = code;
+      _codeSent = true;
+      _statusBanner = res.message;
+      if (!res.sentViaApi) {
+        _showBackupCodeHint = true;
+      }
+    });
   }
 
   Future<void> _verifyAndLogin() async {
-    if (_otpCtrl.text.trim() != _generatedOtp) {
+    final entered = _otpCtrl.text.trim();
+    if (entered.isEmpty) {
+      setState(() => _errorMsg = "4 xonali SMS kodni kiriting!");
+      return;
+    }
+    if (entered != _generatedOtp) {
       HapticFeedback.vibrate();
-      setState(() => _errorMsg = "Tasdiqlash kodi noto'g'ri!");
+      setState(() => _errorMsg = "Kiritilgan tasdiqlash kodi noto'g'ri!");
       return;
     }
     setState(() => _isLoading = true);
-    final fullPhone = "$_countryCode ${_phoneCtrl.text.trim()}";
+    final rawDigits = _phoneCtrl.text.replaceAll(RegExp(r'[^0-9]'), '');
+    final fullPhone = "$_countryCode $rawDigits";
     await appState.completeLogin(_nameCtrl.text.trim(), fullPhone);
     if (mounted) setState(() => _isLoading = false);
   }
@@ -904,8 +1030,8 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                 const SizedBox(height: 6),
                 Text(
                   _codeSent
-                      ? "SMS orqali yuborilgan 4 xonali kodni kiriting"
-                      : "Telefon raqamingiz orqali tizimga kiring.\nBarcha bonus va buyurtmalaringiz saqlanadi.",
+                      ? "Raqamingizga yuborilgan 4 xonali SMS kodni kiriting"
+                      : "Telefon raqamingiz orqali tizimga kiring.\nBarcha bonus va buyurtmalaringiz bulutda saqlanadi.",
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.grey, fontSize: 13),
                 ),
@@ -943,8 +1069,8 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                                 child: DropdownButton<String>(
                                   value: _countryCode,
                                   items: const [
-                                    DropdownMenuItem(value: "+998", child: Text("🇺🇿 +998")),
                                     DropdownMenuItem(value: "+7", child: Text("🇷🇺 +7")),
+                                    DropdownMenuItem(value: "+998", child: Text("🇺🇿 +998")),
                                   ],
                                   onChanged: (v) => setState(() => _countryCode = v!),
                                 ),
@@ -955,9 +1081,17 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                               child: TextField(
                                 controller: _phoneCtrl,
                                 keyboardType: TextInputType.phone,
+                                onChanged: (val) {
+                                  final d = val.replaceAll(RegExp(r'[^0-9]'), '');
+                                  if (d.length == 10 && d.startsWith('9') && _countryCode != "+7") {
+                                    setState(() => _countryCode = "+7");
+                                  } else if (d.length == 9 && _countryCode != "+998") {
+                                    setState(() => _countryCode = "+998");
+                                  }
+                                },
                                 decoration: InputDecoration(
                                   labelText: "Telefon raqam",
-                                  hintText: _countryCode == "+998" ? "90 123 45 67" : "900 123 45 67",
+                                  hintText: _countryCode == "+7" ? "967 137 07 38" : "90 123 45 67",
                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                                 ),
                               ),
@@ -973,16 +1107,29 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.verified_user, color: kPrimaryGreen),
+                              const Icon(Icons.sms_outlined, color: kPrimaryGreen),
                               const SizedBox(width: 8),
                               Expanded(
-                                child: Text(
-                                  "Raqam: $_countryCode ${_phoneCtrl.text}\nTasdiqlash kodi: $_generatedOtp",
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Raqam: $_countryCode ${_phoneCtrl.text}",
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                    if (_statusBanner != null)
+                                      Text(
+                                        _statusBanner!,
+                                        style: const TextStyle(fontSize: 11, color: kPrimaryGreen),
+                                      ),
+                                  ],
                                 ),
                               ),
                               TextButton(
-                                onPressed: () => setState(() => _codeSent = false),
+                                onPressed: () => setState(() {
+                                  _codeSent = false;
+                                  _errorMsg = null;
+                                }),
                                 child: const Text("O'zgartirish"),
                               ),
                             ],
@@ -992,21 +1139,39 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                         TextField(
                           controller: _otpCtrl,
                           keyboardType: TextInputType.number,
+                          autofocus: true,
                           maxLength: 4,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 8),
+                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 10),
                           decoration: InputDecoration(
-                            labelText: "SMS Tasdiqlash kodi",
+                            labelText: "4 xonali SMS kodni yozing",
+                            hintText: "• • • •",
                             counterText: "",
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                           ),
                         ),
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: () => setState(() => _showBackupCodeHint = !_showBackupCodeHint),
+                            icon: const Icon(Icons.help_outline, size: 15, color: Colors.grey),
+                            label: Text(
+                              _showBackupCodeHint ? "Zaxira SMS kod: $_generatedOtp" : "SMS kechikdimi?",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _showBackupCodeHint ? kAccentYellow : Colors.grey,
+                                fontWeight: _showBackupCodeHint ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                       if (_errorMsg != null) ...[
-                        const SizedBox(height: 10),
-                        Text(_errorMsg!, style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+                        const SizedBox(height: 8),
+                        Text(_errorMsg!, style: const TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.w600)),
                       ],
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 14),
                       SizedBox(
                         width: double.infinity,
                         height: 50,
@@ -1042,7 +1207,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
 }
 
 // ============================================================================
-// ASOSIY KONTEYNER VA MENYU (Kunduzgi/Tungi ranglar 100% to'g'rilangan)
+// ASOSIY KONTEYNER VA MENYU
 // ============================================================================
 class RoleContainerScreen extends StatefulWidget {
   const RoleContainerScreen({super.key});
@@ -1733,7 +1898,7 @@ class FavoritePlacesScreen extends StatelessWidget {
                 appState.addFavorite(
                   titleCtrl.text.trim(),
                   addrCtrl.text.trim().isEmpty ? titleCtrl.text.trim() : addrCtrl.text.trim(),
-                  const Point(latitude: 41.3111, longitude: 69.2797),
+                  const Point(latitude: 55.7158, longitude: 37.7869),
                 );
                 Navigator.pop(ctx);
               }
@@ -1884,7 +2049,7 @@ class _FeedbackSupportScreenState extends State<FeedbackSupportScreen> {
 }
 // === 1-QISM TUGADI. SHU YERDAN PASTGA 2-QISMNI QO'SHING ===
 // ============================================================================
-// ELEGANT TAXI - CLOUD PRO (2-QISM: XARITA, QIDIRUV, HAYDOVCHI, OPERATOR, ADMIN)
+// ELEGANT TAXI - CLOUD PRO v4.0 (2-QISM: XARITA, MASHINALAR, TARIFLAR, ROLLAR)
 // ============================================================================
 
 class ClientMapScreen extends StatefulWidget {
@@ -1905,7 +2070,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   YandexMapController? _mapController;
   final List<MapObject> _mapObjects = [];
 
-  Point _fromPoint = const Point(latitude: 41.3111, longitude: 69.2797);
+  Point _fromPoint = const Point(latitude: 55.7158, longitude: 37.7869);
   Point? _destinationLocation;
 
   String _fromAddress = "Joylashuv aniqlanmoqda...";
@@ -1919,28 +2084,35 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
 
   String _pinMode = 'from';
   bool _isDraggingMap = false;
-  Point _cameraCenterPoint = const Point(latitude: 41.3111, longitude: 69.2797);
+  Point _cameraCenterPoint = const Point(latitude: 55.7158, longitude: 37.7869);
   Timer? _geocodeDebounce;
 
   final List<String> _selectedWishes = [];
   Uint8List? _cachedStartIcon;
   Uint8List? _cachedEndIcon;
-  Uint8List? _cachedTaxiIcon;
+  Uint8List? _cachedTaxiCarIcon;
+  Uint8List? _cachedAssignedCarIcon;
 
+  // Qotib qolishdan 100% himoyalangan faol buyurtma aniqlagichi
   OrderModel? get _activeOrder {
     if (_activeOrderId != null) {
       for (final o in appState.orders) {
-        if (o.id == _activeOrderId) return o;
+        if (o.id == _activeOrderId) {
+          if (o.closedByClient || appState.dismissedOrderIds.contains(o.id) || o.status == 'Bekor qilindi') {
+            return null;
+          }
+          return o;
+        }
       }
     }
     if (appState.userPhone.isNotEmpty) {
       for (final o in appState.orders) {
-        if (o.clientPhone == appState.userPhone && o.status != 'Bekor qilindi') {
-          final ageMinutes = DateTime.now().difference(o.createdAt).inMinutes;
-          if (o.status != 'Yakunlandi' || ageMinutes < 2) {
-            _activeOrderId = o.id;
-            return o;
-          }
+        if (o.clientPhone == appState.userPhone &&
+            !o.closedByClient &&
+            !appState.dismissedOrderIds.contains(o.id) &&
+            o.status != 'Bekor qilindi') {
+          _activeOrderId = o.id;
+          return o;
         }
       }
     }
@@ -1958,12 +2130,12 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
   }
 
   Future<void> _ensureIconsLoaded() async {
-    _cachedStartIcon ??= await _createMarkerImage(kPrimaryGreen, "A");
-    _cachedEndIcon ??= await _createMarkerImage(Colors.redAccent, "B");
-    _cachedTaxiIcon ??= await _createMarkerImage(kAccentYellow, "T");
+    _cachedStartIcon ??= await _createPinMarkerImage(kPrimaryGreen, "A");
+    _cachedEndIcon ??= await _createPinMarkerImage(Colors.redAccent, "B");
+    _cachedTaxiCarIcon ??= await _createTopDownCarImage(isAssigned: false);
+    _cachedAssignedCarIcon ??= await _createTopDownCarImage(isAssigned: true);
   }
 
-  // Kirill <-> Lotin transliteratsiyasi (Har ikki alifboda ham ko'chalarni topish uchun)
   String _cyrillicToLatin(String text) {
     const map = {
       'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
@@ -2013,7 +2185,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     return "Ko'cha (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})";
   }
 
-  Future<Uint8List> _createMarkerImage(Color color, String label) async {
+  Future<Uint8List> _createPinMarkerImage(Color color, String label) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final paint = Paint()
@@ -2026,11 +2198,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     final textPainter = TextPainter(
       text: TextSpan(
         text: label,
-        style: TextStyle(
-          color: color == kAccentYellow ? Colors.black : color,
-          fontSize: 17,
-          fontWeight: FontWeight.w900,
-        ),
+        style: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.w900),
       ),
       textDirection: TextDirection.ltr,
     );
@@ -2039,6 +2207,80 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
 
     final picture = recorder.endRecording();
     final image = await picture.toImage(64, 64);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
+  }
+
+  // Xaritada haqiqiy taksi mashinasining yuqoridan ko'rinishi (Top-down 3D Car Marker)
+  Future<Uint8List> _createTopDownCarImage({required bool isAssigned}) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    if (isAssigned) {
+      final pulsePaint = Paint()
+        ..color = kPrimaryGreen.withOpacity(0.28)
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(const Offset(48, 48), 44, pulsePaint);
+    }
+
+    // Soya
+    final shadowPaint = Paint()
+      ..color = Colors.black45
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(const Rect.fromLTWH(28, 14, 40, 68), const Radius.circular(14)),
+      shadowPaint,
+    );
+
+    // G'ildiraklar
+    final wheelPaint = Paint()..color = const Color(0xFF1B1B1B);
+    canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(24, 20, 6, 14), const Radius.circular(3)), wheelPaint);
+    canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(66, 20, 6, 14), const Radius.circular(3)), wheelPaint);
+    canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(24, 60, 6, 14), const Radius.circular(3)), wheelPaint);
+    canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(66, 60, 6, 14), const Radius.circular(3)), wheelPaint);
+
+    // Kuzov
+    final bodyPaint = Paint()
+      ..color = isAssigned ? kPrimaryGreen : Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(const Rect.fromLTWH(28, 12, 40, 70), const Radius.circular(14)),
+      bodyPaint,
+    );
+
+    // Old chiroqlar (Faralar)
+    final lightPaint = Paint()..color = kAccentYellow;
+    canvas.drawOval(const Rect.fromLTWH(32, 11, 8, 4), lightPaint);
+    canvas.drawOval(const Rect.fromLTWH(56, 11, 8, 4), lightPaint);
+
+    // Oynalar (Old va orqa oyna)
+    final glassPaint = Paint()..color = const Color(0xFF222834);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(const Rect.fromLTWH(32, 24, 32, 44), const Radius.circular(8)),
+      glassPaint,
+    );
+
+    // Tom qismi
+    final roofPaint = Paint()..color = isAssigned ? const Color(0xFF28B840) : const Color(0xFFF3F4F6);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(const Rect.fromLTWH(34, 34, 28, 24), const Radius.circular(6)),
+      roofPaint,
+    );
+
+    // Taksi shashkasi (Tomdagi sariq belgi)
+    final signPaint = Paint()..color = kAccentYellow;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(const Rect.fromLTWH(39, 42, 18, 8), const Radius.circular(3)),
+      signPaint,
+    );
+
+    final dotPaint = Paint()..color = Colors.black87;
+    canvas.drawRect(const Rect.fromLTWH(42, 44, 3, 4), dotPaint);
+    canvas.drawRect(const Rect.fromLTWH(47, 44, 3, 4), dotPaint);
+    canvas.drawRect(const Rect.fromLTWH(52, 44, 3, 4), dotPaint);
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(96, 96);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     return byteData!.buffer.asUint8List();
   }
@@ -2180,51 +2422,94 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     });
   }
 
-  Future<void> _updateMapObjects() async {
-    await _ensureIconsLoaded();
-    if (!mounted) return;
+  List<MapObject> _buildLiveMapObjects(OrderModel? activeOrd) {
+    final List<MapObject> list = [];
+    for (final obj in _mapObjects) {
+      if (obj.mapId.value == 'route') list.add(obj);
+    }
 
-    setState(() {
-      _mapObjects.removeWhere((el) => el.mapId.value != 'route');
-      _mapObjects.add(
+    if (_cachedStartIcon != null) {
+      list.add(
         PlacemarkMapObject(
           mapId: const MapObjectId('start'),
-          point: _fromPoint,
+          point: activeOrd != null ? activeOrd.fromPoint : _fromPoint,
           icon: PlacemarkIcon.single(
             PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(_cachedStartIcon!), scale: 1.0),
           ),
         ),
       );
+    }
 
+    final Point? endPt = activeOrd != null ? activeOrd.toPoint : _destinationLocation;
+    if (endPt != null && _cachedEndIcon != null) {
+      list.add(
+        PlacemarkMapObject(
+          mapId: const MapObjectId('end'),
+          point: endPt,
+          icon: PlacemarkIcon.single(
+            PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(_cachedEndIcon!), scale: 1.0),
+          ),
+        ),
+      );
+    }
+
+    // Agar faol buyurtmada haydovchi biriktirilgan bo'lsa, haydovchi mashinasini xaritada aniq ko'rsatamiz
+    if (activeOrd != null && activeOrd.driverName != null && _cachedAssignedCarIcon != null) {
+      final Point driverPt = Point(
+        latitude: activeOrd.driverLat ?? (activeOrd.fromPoint.latitude + 0.0018),
+        longitude: activeOrd.driverLon ?? (activeOrd.fromPoint.longitude + 0.0015),
+      );
+      list.add(
+        PlacemarkMapObject(
+          mapId: const MapObjectId('assigned_driver_car'),
+          point: driverPt,
+          direction: 35,
+          opacity: 1.0,
+          icon: PlacemarkIcon.single(
+            PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(_cachedAssignedCarIcon!), scale: 1.15),
+          ),
+        ),
+      );
+      if (activeOrd.status == 'Qabul qilindi') {
+        list.add(
+          PolylineMapObject(
+            mapId: const MapObjectId('driver_approaching_line'),
+            polyline: Polyline(points: [driverPt, activeOrd.fromPoint]),
+            strokeColor: kAccentYellow,
+            strokeWidth: 4.0,
+            dashLength: 10,
+            gapLength: 6,
+          ),
+        );
+      }
+    } else if (_cachedTaxiCarIcon != null) {
+      // Atrofdagi bo'sh taksi mashinalari
       for (int i = 0; i < appState.drivers.length; i++) {
         final d = appState.drivers[i];
         final pt = Point(
-          latitude: _fromPoint.latitude + 0.0018 * (i + 1),
-          longitude: _fromPoint.longitude + 0.0015 * (i % 2 == 0 ? 1 : -1),
+          latitude: _fromPoint.latitude + 0.0017 * (i + 1) * (i % 2 == 0 ? 1 : -1),
+          longitude: _fromPoint.longitude + 0.0019 * (i + 1),
         );
-        _mapObjects.add(
+        list.add(
           PlacemarkMapObject(
             mapId: MapObjectId('taxi_${d.id}'),
             point: pt,
+            direction: (i * 65.0) % 360,
+            opacity: 0.95,
             icon: PlacemarkIcon.single(
-              PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(_cachedTaxiIcon!), scale: 0.9),
+              PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(_cachedTaxiCarIcon!), scale: 0.95),
             ),
           ),
         );
       }
+    }
 
-      if (_destinationLocation != null) {
-        _mapObjects.add(
-          PlacemarkMapObject(
-            mapId: const MapObjectId('end'),
-            point: _destinationLocation!,
-            icon: PlacemarkIcon.single(
-              PlacemarkIconStyle(image: BitmapDescriptor.fromBytes(_cachedEndIcon!), scale: 1.0),
-            ),
-          ),
-        );
-      }
-    });
+    return list;
+  }
+
+  Future<void> _updateMapObjects() async {
+    await _ensureIconsLoaded();
+    if (mounted) setState(() {});
   }
 
   int _getPrice(String tariff) {
@@ -2269,7 +2554,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     _cameraCenterPoint = pos.target;
     if (reason != CameraUpdateReason.gestures) return;
     final activeOrd = _activeOrder;
-    if (activeOrd != null && activeOrd.status != 'Bekor qilindi' && activeOrd.status != 'Yakunlandi') return;
+    if (activeOrd != null) return;
 
     if (!finished && !_isDraggingMap) {
       setState(() => _isDraggingMap = true);
@@ -2307,7 +2592,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     }
   }
 
-  // Aqlli qidiruv: Kirill va Lotin, aynan foydalanuvchi turgan shahar/atrofdagi eng yaqin ko'chalar
   void _openLiveAddressSearchSheet({required bool initialFocusTo}) {
     final bool dark = appState.isDarkMode;
     final TextEditingController fromCtrl = TextEditingController(text: _fromAddress);
@@ -2353,7 +2637,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
               if (item.geometry.isNotEmpty && item.geometry.first.point != null) {
                 final pt = item.geometry.first.point!;
                 final dist = _calculateStraightDistance(_fromPoint, pt);
-                // Uzoq davlat va 120 km dan uzoq hududlarni filtrlab tashlaymiz
                 if (dist <= 120.0) {
                   final key = "${pt.latitude.toStringAsFixed(4)}_${pt.longitude.toStringAsFixed(4)}";
                   if (!seenKeys.contains(key)) {
@@ -2374,17 +2657,13 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           }
         }
 
-        // 1. Asl yozilgan matn bo'yicha (Kirill yoki Lotin)
         await fetchForText("${appState.currentCity} $q");
         await fetchForText(q);
-
-        // 2. Agar Kirill harflarida yozilgan bo'lsa, Lotin transliteratsiyasi orqali ham mahalliy bazadan qidiramiz
         final String latinQuery = _cyrillicToLatin(q);
         if (latinQuery != q) {
           await fetchForText(latinQuery);
         }
 
-        // Eng yaqin ko'chalarni birinchi o'ringa chiqaramiz
         collected.sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
 
         setModalState(() {
@@ -2453,7 +2732,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                                 ),
                               ),
                               IconButton(
-                                tooltip: "Xaritadan A nuqtani belgilash",
                                 icon: const Icon(Icons.pin_drop_outlined, color: kPrimaryGreen),
                                 onPressed: () {
                                   Navigator.pop(ctx);
@@ -2519,7 +2797,6 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: IconButton(
-                                  tooltip: "Xaritadan B nuqtani belgilash",
                                   icon: const Icon(Icons.location_searching, color: kPrimaryGreen),
                                   onPressed: () {
                                     Navigator.pop(ctx);
@@ -2700,20 +2977,20 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // AnimatedBuilder orqali Firebase'dan kelgan har bir o'zgarish shu zahoti ekranda yangilanadi!
     return AnimatedBuilder(
       animation: appState,
       builder: (context, _) {
         final int pendingCount = appState.orders.where((o) => o.status == 'Kutilmoqda').length;
         final OrderModel? activeOrd = _activeOrder;
         final bool dark = appState.isDarkMode;
+        final List<MapObject> liveObjects = _buildLiveMapObjects(activeOrd);
 
         return Scaffold(
           body: Stack(
             children: [
               YandexMap(
                 nightModeEnabled: dark,
-                mapObjects: _mapObjects,
+                mapObjects: liveObjects,
                 onMapCreated: (controller) async {
                   _mapController = controller;
                   await _determinePosition(immediateJump: true);
@@ -2721,7 +2998,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                 onCameraPositionChanged: _onCameraPositionChanged,
                 onMapTap: (point) async {
                   FocusManager.instance.primaryFocus?.unfocus();
-                  if (activeOrd != null && activeOrd.status != 'Bekor qilindi' && activeOrd.status != 'Yakunlandi') return;
+                  if (activeOrd != null) return;
 
                   setState(() {
                     _destinationLocation = point;
@@ -2741,12 +3018,12 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                 },
               ),
 
-              if (activeOrd == null || activeOrd.status == 'Bekor qilindi')
+              if (activeOrd == null)
                 IgnorePointer(
                   child: Center(
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 180),
-                      margin: EdgeInsets.only(bottom: _isDraggingMap ? 210 : 185),
+                      margin: EdgeInsets.only(bottom: _isDraggingMap ? 215 : 190),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -2886,7 +3163,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
 
               Positioned(
                 right: 14,
-                bottom: 335,
+                bottom: 345,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -2924,7 +3201,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
                     boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 18)],
                   ),
-                  child: activeOrd != null && activeOrd.status != 'Bekor qilindi'
+                  child: activeOrd != null
                       ? _buildActiveOrderUI(activeOrd, dark)
                       : _buildBookingUI(dark),
                 ),
@@ -2942,7 +3219,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.check_circle, color: kPrimaryGreen, size: 48),
+          const Icon(Icons.check_circle, color: kPrimaryGreen, size: 50),
           const SizedBox(height: 6),
           const Text("Safar muvaffaqiyatli yakunlandi!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
           const SizedBox(height: 4),
@@ -2950,18 +3227,27 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: kPrimaryGreen, foregroundColor: Colors.white),
+            height: 50,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kPrimaryGreen,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
               onPressed: () {
+                // Qotib qolishni 100% oldini oluvchi tozalash
+                final String finishedId = ord.id;
                 setState(() {
                   _activeOrderId = null;
                   _destinationLocation = null;
                   _toAddress = "";
+                  _pinMode = 'from';
                   _mapObjects.removeWhere((el) => el.mapId.value == 'route' || el.mapId.value == 'end');
                 });
+                appState.dismissCompletedOrder(finishedId);
               },
-              child: const Text("YANGI BUYURTMA BERISH", style: TextStyle(fontWeight: FontWeight.bold)),
+              icon: const Icon(Icons.add_road),
+              label: const Text("YANGI BUYURTMA BERISH", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
             ),
           ),
         ],
@@ -2972,10 +3258,10 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     String statusTitle = "Haydovchi qidirilmoqda...";
     if (st == 'Qabul qilindi') {
       badgeColor = Colors.blue;
-      statusTitle = "Haydovchi qabul qildi, yo'lga chiqdi!";
+      statusTitle = "Haydovchi yo'lga chiqdi, siz tomonga kelmoqda!";
     } else if (st == 'Yetib keldi') {
       badgeColor = kPrimaryGreen;
-      statusTitle = "Haydovchi yetib keldi, sizni kutmoqda!";
+      statusTitle = "Haydovchi manzilga yetib keldi, sizni kutmoqda!";
     } else if (st == 'Safarda') {
       badgeColor = Colors.purple;
       statusTitle = "Safar davom etmoqda...";
@@ -2997,27 +3283,50 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
           ],
         ),
         const SizedBox(height: 10),
-        Text(statusTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        const SizedBox(height: 6),
+        Text(statusTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+        const SizedBox(height: 8),
         if (ord.driverName != null) ...[
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: dark ? kDarkCard : Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: kPrimaryGreen.withOpacity(0.4)),
             ),
             child: Row(
               children: [
-                const CircleAvatar(backgroundColor: kPrimaryGreen, child: Icon(Icons.drive_eta, color: Colors.white)),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: kPrimaryGreen.withOpacity(0.18), shape: BoxShape.circle),
+                  child: const Icon(Icons.local_taxi, color: kPrimaryGreen, size: 24),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(ord.driverName!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                      Text(ord.driverCar ?? "", style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                      Text(ord.driverCar ?? "", style: const TextStyle(color: kAccentYellow, fontWeight: FontWeight.w600, fontSize: 13)),
                     ],
                   ),
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    backgroundColor: kPrimaryGreen.withOpacity(0.15),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () {
+                    final pt = Point(
+                      latitude: ord.driverLat ?? ord.fromPoint.latitude,
+                      longitude: ord.driverLon ?? ord.fromPoint.longitude,
+                    );
+                    _mapController?.moveCamera(
+                      CameraUpdate.newCameraPosition(CameraPosition(target: pt, zoom: 16.5)),
+                      animation: const MapAnimation(type: MapAnimationType.smooth, duration: 0.7),
+                    );
+                  },
+                  icon: const Icon(Icons.my_location, color: kPrimaryGreen, size: 16),
+                  label: const Text("Xaritada", style: TextStyle(color: kPrimaryGreen, fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
@@ -3031,8 +3340,9 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             child: OutlinedButton(
               style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
               onPressed: () {
-                appState.cancelOrder(ord.id);
+                final String cancelId = ord.id;
                 setState(() => _activeOrderId = null);
+                appState.cancelOrder(cancelId);
               },
               child: const Text("Buyurtmani bekor qilish"),
             ),
@@ -3054,7 +3364,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                   InkWell(
                     onTap: () => _openLiveAddressSearchSheet(initialFocusTo: false),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6.0),
+                      padding: const EdgeInsets.symmetric(vertical: 5.0),
                       child: Row(
                         children: [
                           const SizedBox(
@@ -3079,11 +3389,11 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
                       ),
                     ),
                   ),
-                  const Divider(height: 10),
+                  const Divider(height: 8),
                   InkWell(
                     onTap: () => _openLiveAddressSearchSheet(initialFocusTo: true),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6.0),
+                      padding: const EdgeInsets.symmetric(vertical: 5.0),
                       child: Row(
                         children: [
                           const SizedBox(
@@ -3148,31 +3458,63 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Row(
           children: [
-            _serviceChip("Taksi", AppStrings.tr("taxi")),
+            _serviceChip("Taksi", AppStrings.tr("taxi"), Icons.local_taxi),
             const SizedBox(width: 8),
-            _serviceChip("Dostavka", AppStrings.tr("delivery")),
+            _serviceChip("Dostavka", AppStrings.tr("delivery"), Icons.inventory_2_outlined),
           ],
         ),
         const SizedBox(height: 10),
+        // Yuqori didli Standart / Komfort / Dostavka kartalari
         if (_serviceMode == 'Taksi')
           Row(
             children: [
-              _tariffCard("Standart", AppStrings.tr("standard"), Icons.local_taxi, dark),
+              Expanded(
+                child: _premiumTariffCard(
+                  keyName: "Standart",
+                  title: AppStrings.tr("standard"),
+                  subtitle: "Tezkor sedan • 4 o'rin",
+                  eta: "1 daq",
+                  accentColor: kAccentYellow,
+                  isComfort: false,
+                   isDelivery: false,
+                  dark: dark,
+                ),
+              ),
               const SizedBox(width: 10),
-              _tariffCard("Komfort", AppStrings.tr("comfort"), Icons.directions_car_filled, dark),
+              Expanded(
+                child: _premiumTariffCard(
+                  keyName: "Komfort",
+                  title: AppStrings.tr("comfort"),
+                  subtitle: "Keng salon • AC",
+                  eta: "2 daq",
+                  accentColor: const Color(0xFF00E5FF),
+                  isComfort: true,
+                  isDelivery: false,
+                  dark: dark,
+                ),
+              ),
             ],
           )
         else
-          _tariffCard("Dostavka", AppStrings.tr("delivery"), Icons.local_shipping, dark),
-        const SizedBox(height: 10),
+          _premiumTariffCard(
+            keyName: "Dostavka",
+            title: AppStrings.tr("delivery"),
+            subtitle: "Eshikdan eshikkacha tezkor kuryer",
+            eta: "3 daq",
+            accentColor: Colors.orangeAccent,
+            isComfort: false,
+            isDelivery: true,
+            dark: dark,
+          ),
+        const SizedBox(height: 8),
         InkWell(
           onTap: _openWishesDialog,
           borderRadius: BorderRadius.circular(10),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6.0),
+            padding: const EdgeInsets.symmetric(vertical: 5.0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -3186,7 +3528,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         SizedBox(
           width: double.infinity,
           height: 52,
@@ -3195,7 +3537,7 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
               backgroundColor: kPrimaryGreen,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              elevation: 2,
+              elevation: 3,
             ),
             onPressed: _submitOrder,
             child: Text(
@@ -3210,40 +3552,74 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
     );
   }
 
-  Widget _serviceChip(String key, String label) {
+  Widget _serviceChip(String key, String label, IconData icon) {
     final bool selected = _serviceMode == key;
     return GestureDetector(
       onTap: () => setState(() => _serviceMode = key),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: selected ? kPrimaryGreen : Colors.grey.withOpacity(0.18),
+          color: selected ? kPrimaryGreen : Colors.grey.withOpacity(0.16),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : Colors.grey,
-            fontWeight: FontWeight.bold,
-            fontSize: 13,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: selected ? Colors.white : Colors.grey),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : Colors.grey,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _tariffCard(String key, String title, IconData icon, bool dark) {
-    final bool selected = _selectedTariff == key || _serviceMode == 'Dostavka';
-    final int price = _getPrice(key);
+  // Zamonaviy yuqori didli Avtomobil illyustratsiyali Tarif kartasi
+  Widget _premiumTariffCard({
+    required String keyName,
+    required String title,
+    required String subtitle,
+    required String eta,
+    required Color accentColor,
+    required bool isComfort,
+    required bool isDelivery,
+    required bool dark,
+  }) {
+    final bool selected = _selectedTariff == keyName || _serviceMode == 'Dostavka';
+    final int price = _getPrice(keyName);
+
     return GestureDetector(
-      onTap: () => setState(() => _selectedTariff = key),
-      child: Container(
-        width: 128,
-        padding: const EdgeInsets.all(10),
+      onTap: () => setState(() => _selectedTariff = keyName),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(11),
         decoration: BoxDecoration(
-          color: dark ? kDarkCard : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: selected ? kPrimaryGreen : Colors.transparent, width: 2),
+          gradient: selected
+              ? LinearGradient(
+                  colors: dark
+                      ? [const Color(0xFF1F3528), kDarkCard]
+                      : [kPrimaryGreen.withOpacity(0.14), Colors.white],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                )
+              : null,
+          color: selected ? null : (dark ? kDarkCard : Colors.grey.shade100),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected ? kPrimaryGreen : Colors.transparent,
+            width: 2.0,
+          ),
+          boxShadow: selected
+              ? [BoxShadow(color: kPrimaryGreen.withOpacity(0.22), blurRadius: 10, offset: const Offset(0, 3))]
+              : null,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3252,24 +3628,122 @@ class _ClientMapScreenState extends State<ClientMapScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(6)),
-                  child: const Text("1 daq", style: TextStyle(fontSize: 10, color: Colors.white70)),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: selected ? kPrimaryGreen : Colors.black26,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.bolt, size: 11, color: kAccentYellow),
+                      Text(
+                        eta,
+                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
                 ),
-                Icon(icon, color: key == 'Standart' ? kAccentYellow : Colors.blueGrey, size: 22),
+                // Zamonaviy mashina korpusi badgesi
+                SizedBox(
+                  width: 58,
+                  height: 28,
+                  child: CustomPaint(
+                    painter: _ModernCarSilhouettePainter(
+                      carColor: accentColor,
+                      isComfort: isComfort,
+                      isDelivery: isDelivery,
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 6),
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
+            Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            const SizedBox(height: 3),
             Text(
               _destinationLocation == null ? "min $price so'm" : "$price so'm",
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: kPrimaryGreen),
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: kPrimaryGreen),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+// Tarif kartalari ichidagi zamonaviy sport/sedan avtomobil chizmasi
+class _ModernCarSilhouettePainter extends CustomPainter {
+  final Color carColor;
+  final bool isComfort;
+  final bool isDelivery;
+
+  _ModernCarSilhouettePainter({
+    required this.carColor,
+    required this.isComfort,
+    required this.isDelivery,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bodyPaint = Paint()
+      ..color = carColor
+      ..style = PaintingStyle.fill;
+
+    // G'ildirak osti soyasi
+    final shadowPaint = Paint()..color = Colors.black38;
+    canvas.drawOval(Rect.fromLTWH(4, size.height - 5, size.width - 8, 4), shadowPaint);
+
+    // Kuzov profili
+    final path = Path();
+    if (isDelivery) {
+      path.moveTo(6, size.height - 6);
+      path.lineTo(6, 10);
+      path.quadraticBezierTo(6, 6, 12, 6);
+      path.lineTo(36, 6);
+      path.lineTo(44, 13);
+      path.lineTo(52, 15);
+      path.quadraticBezierTo(55, 16, 55, size.height - 6);
+      path.close();
+    } else {
+      path.moveTo(4, size.height - 6);
+      path.quadraticBezierTo(4, 14, 12, 13);
+      path.lineTo(20, 6);
+      path.quadraticBezierTo(28, 4, 38, 6);
+      path.lineTo(46, 13);
+      path.quadraticBezierTo(55, 14, 55, size.height - 6);
+      path.close();
+    }
+    canvas.drawPath(path, bodyPaint);
+
+    // Oynalar
+    final windowPaint = Paint()..color = const Color(0xFF1A1E29);
+    final winPath = Path();
+    winPath.moveTo(15, 13);
+    winPath.lineTo(21, 8);
+    winPath.lineTo(37, 8);
+    winPath.lineTo(43, 13);
+    winPath.close();
+    canvas.drawPath(winPath, windowPaint);
+
+    if (!isDelivery) {
+      // Taksi shashka chizig'i
+      final stripePaint = Paint()..color = isComfort ? Colors.white : Colors.black87;
+      canvas.drawRect(const Rect.fromLTWH(24, 15, 10, 2.2), stripePaint);
+    }
+
+    // G'ildiraklar
+    final wheelPaint = Paint()..color = const Color(0xFF1E1E1E);
+    final rimPaint = Paint()..color = Colors.grey.shade300;
+    canvas.drawCircle(Offset(15, size.height - 6), 5.0, wheelPaint);
+    canvas.drawCircle(Offset(15, size.height - 6), 2.3, rimPaint);
+    canvas.drawCircle(Offset(44, size.height - 6), 5.0, wheelPaint);
+    canvas.drawCircle(Offset(44, size.height - 6), 2.3, rimPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class DriverTerminalScreen extends StatelessWidget {
@@ -3655,8 +4129,8 @@ class _OperatorViewState extends State<OperatorView> {
                                 clientPhone: _phoneCtrl.text.trim(),
                                 fromAddress: _fromCtrl.text.trim(),
                                 toAddress: _toCtrl.text.trim(),
-                                fromPoint: const Point(latitude: 41.3111, longitude: 69.2797),
-                                toPoint: const Point(latitude: 41.3200, longitude: 69.2900),
+                                fromPoint: const Point(latitude: 55.7158, longitude: 37.7869),
+                                toPoint: const Point(latitude: 55.7250, longitude: 37.7950),
                                 tariff: _tariff,
                                 distanceKm: km,
                                 price: price,
